@@ -2,7 +2,7 @@
 
 Interactive astronomical sky explorer planned as a foundation for the NASA Space Apps SPHEREx challenge. This project aims to recreate useful SDSS Navigate workflows in an original, accessible dark interface, using real SDSS imagery rather than synthetic or decorative sky data.
 
-> **Project status:** React frontend now runs independently. Search, imagery, catalogue, and coverage data require FastAPI routes, which are not implemented yet; frontend shows explicit unavailable states until then. See [`frontend/README.md`](frontend/README.md) for the frontend/API contract and [`project.md`](project.md) for the full specification.
+> **Project status:** React frontend and FastAPI backend are both implemented and work together against live SDSS DR18 and CDS Sesame services. See [`backend/README.md`](backend/README.md) for backend setup, verified upstream behaviour and limitations, [`frontend/README.md`](frontend/README.md) for the frontend/API contract, and [`project.md`](project.md) for the full specification.
 
 ## Scope
 

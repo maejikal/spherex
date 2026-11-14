@@ -144,3 +144,35 @@ export function zoomScale(
 export function formatCoordinate(value: number, digits = 5): string {
   return Number.isFinite(value) ? value.toFixed(digits) : 'Unavailable';
 }
+
+/**
+ * Forward gnomonic projection: the exact inverse of `coordinateAtPixelOffset`. Returns the pixel
+ * offset (x right, y down, north-up/east-left) of `target` from `center`, or null when the target
+ * is on the far hemisphere and has no tangent-plane image.
+ */
+export function pixelOffsetOfCoordinate(
+  center: SkyCoordinates,
+  target: SkyCoordinates,
+  scaleArcsecPerPixel: number,
+): { x: number; y: number } | null {
+  if (
+    !Number.isFinite(center.ra) || !Number.isFinite(center.dec) ||
+    !Number.isFinite(target.ra) || !Number.isFinite(target.dec) ||
+    !Number.isFinite(scaleArcsecPerPixel) || scaleArcsecPerPixel <= 0
+  ) {
+    return null;
+  }
+  const ra0 = center.ra / DEGREES_PER_RADIAN;
+  const dec0 = center.dec / DEGREES_PER_RADIAN;
+  const ra = target.ra / DEGREES_PER_RADIAN;
+  const dec = target.dec / DEGREES_PER_RADIAN;
+  const deltaRa = ra - ra0;
+  const cosC = Math.sin(dec0) * Math.sin(dec) + Math.cos(dec0) * Math.cos(dec) * Math.cos(deltaRa);
+  if (cosC <= 1e-6) return null;
+  const east = (Math.cos(dec) * Math.sin(deltaRa)) / cosC;
+  const north = (Math.cos(dec0) * Math.sin(dec) - Math.sin(dec0) * Math.cos(dec) * Math.cos(deltaRa)) / cosC;
+  const perPixel = scaleArcsecPerPixel * RADIANS_PER_ARCSECOND;
+  const x = -east / perPixel;
+  const y = -north / perPixel;
+  return { x: Object.is(x, -0) ? 0 : x, y: Object.is(y, -0) ? 0 : y };
+}

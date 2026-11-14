@@ -271,22 +271,26 @@ button:disabled {
   touch-action: none;
 }
 
-.sky-viewer__surface--ready { cursor: crosshair; }
+.sky-viewer__surface--ready { cursor: grab; }
 .sky-viewer__surface--ready:active { cursor: grabbing; }
+/* Neutral grey = imagery not loaded here (not a statement about sky coverage). */
+.sky-viewer__surface--has-image { background: #292d35; }
 
 .sky-viewer__image-layer {
   position: absolute;
   inset: 0;
-  display: flex;
-  transform-origin: center;
+  will-change: transform;
   pointer-events: none;
 }
 
 .sky-viewer__image {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
-  width: 100%;
-  height: 100%;
+  max-width: none;
   object-fit: fill;
+  transform-origin: 0 0;
   user-select: none;
   -webkit-user-drag: none;
 }

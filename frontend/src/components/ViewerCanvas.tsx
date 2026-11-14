@@ -1,9 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { AlertCircle, LoaderCircle, MousePointer2, Move, RotateCcw } from 'lucide-react';
 import { ApiError, fetchCutout } from '../api/client.ts';
 import type { ExplorerView } from '../api/types.ts';
 import { coordinateAtPixelOffset } from '../sky/coordinates.ts';
 import type { SkyCoordinates } from '../sky/coordinates.ts';
+import { placeImage } from '../sky/placement.ts';
 import type { LoadedCutoutInfo } from './Panels.tsx';
 
 interface Dimensions {
@@ -30,6 +32,8 @@ interface ViewerCanvasProps {
 
 const MAX_IMAGE_DIMENSION = 1536;
 const MAX_CACHED_CUTOUTS = 6;
+/** Older cutouts kept underneath the newest one until it covers the whole viewport. */
+const MAX_LAYERS = 3;
 
 export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, onSelect, onPanByDrag, onZoom }: ViewerCanvasProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -39,11 +43,18 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
   const wheelDirection = useRef<'in' | 'out' | null>(null);
   const previousNavigationKey = useRef('');
   const [dimensions, setDimensions] = useState<Dimensions>({ width: 0, height: 0 });
-  const [loaded, setLoaded] = useState<LoadedCutout | null>(null);
+  const [layers, setLayers] = useState<LoadedCutout[]>([]);
+  const [cssSize, setCssSize] = useState<Dimensions>({ width: 0, height: 0 });
+  const dragLayerRef = useRef<HTMLDivElement>(null);
+  const dragFrame = useRef<number | null>(null);
+  const dragTarget = useRef({ x: 0, y: 0 });
+  const layersRef = useRef<LoadedCutout[]>([]);
+  // The newest cutout; it may be centred somewhere other than the current view while a request is pending.
+  const loaded = layers.length > 0 ? layers[layers.length - 1]! : null;
+  layersRef.current = layers;
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
   const [failure, setFailure] = useState<LoadFailure | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [selectedPoint, setSelectedPoint] = useState<{ x: number; y: number } | null>(null);
   const [cursorCoordinates, setCursorCoordinates] = useState<SkyCoordinates | null>(null);
 
@@ -63,6 +74,7 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
         height: Math.max(1, Math.floor(rawHeight * reduction)),
       };
       setDimensions((current) => current.width === next.width && current.height === next.height ? current : next);
+      setCssSize((current) => current.width === rect.width && current.height === rect.height ? current : { width: rect.width, height: rect.height });
       onDimensions(next);
     };
 
@@ -71,6 +83,29 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
     observer.observe(surface);
     return () => observer.disconnect();
   }, [onDimensions]);
+
+  const showImage = (image: LoadedCutout) => {
+    setLayers((previous) => [...previous.filter((layer) => layer.key !== image.key), image].slice(-MAX_LAYERS));
+  };
+
+  const applyDrag = (x: number, y: number) => {
+    dragTarget.current = { x, y };
+    if (dragFrame.current !== null) return;
+    dragFrame.current = window.requestAnimationFrame(() => {
+      dragFrame.current = null;
+      const layer = dragLayerRef.current;
+      if (layer) layer.style.transform = `translate3d(${dragTarget.current.x}px, ${dragTarget.current.y}px, 0)`;
+    });
+  };
+
+  const clearDrag = () => {
+    if (dragFrame.current !== null) {
+      window.cancelAnimationFrame(dragFrame.current);
+      dragFrame.current = null;
+    }
+    dragTarget.current = { x: 0, y: 0 };
+    if (dragLayerRef.current) dragLayerRef.current.style.transform = '';
+  };
 
   const currentKey = view && dimensions.width > 0 && dimensions.height > 0
     ? cutoutKey(view, dimensions)
@@ -96,7 +131,7 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
     if (cached) {
       cache.current.delete(key);
       cache.current.set(key, cached);
-      setLoaded(cached);
+      showImage(cached);
       onCutoutChange(cached);
       setFailure(null);
       setStatus('ready');
@@ -127,10 +162,11 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
           const oldestKey = cache.current.keys().next().value;
           if (oldestKey === undefined) break;
           const oldest = cache.current.get(oldestKey);
-          if (oldest) URL.revokeObjectURL(oldest.url);
+          // A cutout still on screen as a layer must keep its object URL.
+          if (oldest && !layersRef.current.some((layer) => layer.url === oldest.url)) URL.revokeObjectURL(oldest.url);
           cache.current.delete(oldestKey);
         }
-        setLoaded(image);
+        showImage(image);
         onCutoutChange(image);
         setFailure(null);
         setStatus('ready');
@@ -156,10 +192,16 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
   }, []);
 
   useEffect(() => () => {
+    if (dragFrame.current !== null) window.cancelAnimationFrame(dragFrame.current);
+  }, []);
+
+  useEffect(() => () => {
     if (wheelTimer.current !== null) window.clearTimeout(wheelTimer.current);
   }, []);
 
+  // Selection and cursor readout need imagery that matches the current view; panning and zooming do not.
   const readyForInteraction = Boolean(view && loaded && loaded.key === currentKey && status === 'ready');
+  const canNavigate = Boolean(view && loaded && dimensions.width > 0);
   const handleSelect = (clientX: number, clientY: number) => {
     const surface = surfaceRef.current;
     if (!surface || !view || !loaded || !readyForInteraction) return;
@@ -175,15 +217,17 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
   };
 
   const handlePan = (dragX: number, dragY: number) => {
-    if (!readyForInteraction || !view || !loaded || !surfaceRef.current) return;
+    if (!canNavigate || !view || !surfaceRef.current) return;
     const rect = surfaceRef.current.getBoundingClientRect();
-    onPanByDrag(dragX * loaded.width / rect.width, dragY * loaded.height / rect.height);
+    if (!rect.width || !rect.height) return;
+    // Convert CSS pixels to the view's cutout pixels (the unit panCenterByDrag expects).
+    onPanByDrag(dragX * dimensions.width / rect.width, dragY * dimensions.height / rect.height);
     setSelectedPoint(null);
   };
 
   const moveKeyboard = (key: string) => {
     const surface = surfaceRef.current;
-    if (!surface || !loaded || !readyForInteraction) return;
+    if (!surface || !canNavigate) return;
     const distance = surface.clientWidth * 0.12;
     const verticalDistance = surface.clientHeight * 0.12;
     if (key === 'ArrowUp') handlePan(0, verticalDistance);
@@ -191,6 +235,41 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
     if (key === 'ArrowLeft') handlePan(-distance, 0);
     if (key === 'ArrowRight') handlePan(distance, 0);
   };
+
+  const finishDrag = (x: number, y: number, commit: boolean) => {
+    // Commit synchronously, then clear the temporary drag transform in the same task. Imagery is
+    // positioned from the new view centre by React, so there is no frame where it jumps back.
+    flushSync(() => {
+      if (commit) handlePan(x, y);
+    });
+    clearDrag();
+  };
+
+  // Where every retained cutout sits in the *current* view (derived from its own centre and scale).
+  const placements = useMemo(() => {
+    if (!view || dimensions.width <= 0 || cssSize.width <= 0) return [];
+    const cssPerViewPixel = cssSize.width / dimensions.width;
+    return layers.map((layer) => ({
+      layer,
+      placement: placeImage({
+        viewCenter: view,
+        viewScale: view.scale,
+        imageCenter: layer.center,
+        imageScale: layer.scale,
+        imageWidth: layer.width,
+        imageHeight: layer.height,
+        surfaceWidth: cssSize.width,
+        surfaceHeight: cssSize.height,
+        cssPerViewPixel,
+      }),
+    }));
+  }, [layers, view, dimensions.width, cssSize.width, cssSize.height]);
+
+  // Older layers are only needed until a newer one covers the whole viewport; then release them.
+  const coveringIndex = placements.reduce((found, entry, index) => (entry.placement?.coversViewport ? index : found), -1);
+  useEffect(() => {
+    if (coveringIndex > 0) setLayers((previous) => previous.slice(coveringIndex));
+  }, [coveringIndex]);
 
   const message = failureMessage(failure);
   const imageIsCurrent = Boolean(loaded && loaded.key === currentKey);
@@ -203,12 +282,14 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
     <section className="viewer-frame" aria-label="SDSS DR18 image viewer">
       <div
         ref={surfaceRef}
-        className={`sky-viewer__surface${readyForInteraction ? ' sky-viewer__surface--ready' : ''}`}
+        className={`sky-viewer__surface${canNavigate ? ' sky-viewer__surface--ready' : ''}${displayLoadedImage ? ' sky-viewer__surface--has-image' : ''}`}
         role="region"
         aria-label="Sky image. Drag to pan, use arrow keys to navigate, or click to inspect approximate coordinates."
-        tabIndex={readyForInteraction ? 0 : -1}
+        tabIndex={canNavigate ? 0 : -1}
         onPointerDown={(event) => {
-          if (!readyForInteraction || event.button !== 0) return;
+          if (!canNavigate || event.button !== 0) return;
+          // Overlay controls (Retry, etc.) must receive their own click, not start a drag.
+          if (event.target instanceof Element && event.target.closest('button, a, input')) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           pointer.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
         }}
@@ -231,30 +312,32 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
           const y = event.clientY - active.y;
           if (Math.hypot(x, y) > 4) active.moved = true;
           setCursorCoordinates(null);
-          setDragOffset(active.moved ? { x, y } : { x: 0, y: 0 });
+          if (active.moved) applyDrag(x, y);
         }}
         onPointerUp={(event) => {
           const active = pointer.current;
           if (!active || active.id !== event.pointerId) return;
+          pointer.current = null;
           const x = event.clientX - active.x;
           const y = event.clientY - active.y;
-          if (active.moved) handlePan(x, y);
+          if (active.moved) finishDrag(x, y, true);
           else handleSelect(event.clientX, event.clientY);
-          pointer.current = null;
-          setDragOffset({ x: 0, y: 0 });
         }}
         onPointerCancel={() => {
           pointer.current = null;
-          setDragOffset({ x: 0, y: 0 });
+          clearDrag();
           setCursorCoordinates(null);
         }}
         onPointerLeave={() => setCursorCoordinates(null)}
         onLostPointerCapture={() => {
-          pointer.current = null;
-          setDragOffset({ x: 0, y: 0 });
+          // Normal release already cleared the pointer; this only fires for an interrupted drag.
+          if (pointer.current) {
+            pointer.current = null;
+            clearDrag();
+          }
         }}
         onWheel={(event) => {
-          if (!readyForInteraction) return;
+          if (!canNavigate) return;
           event.preventDefault();
           wheelDirection.current = event.deltaY < 0 ? 'in' : 'out';
           if (wheelTimer.current !== null) window.clearTimeout(wheelTimer.current);
@@ -274,33 +357,44 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
           }
         }}
       >
-        {displayLoadedImage && loaded && view && (
-          <div className="sky-viewer__image-layer" style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}>
-            <img
-              className="sky-viewer__image"
-              src={loaded.url}
-              alt={`SDSS DR18 cutout requested at RA ${loaded.center.ra.toFixed(5)}°, Dec ${loaded.center.dec.toFixed(5)}°`}
-              draggable={false}
-              onLoad={(event) => {
-                const actualWidth = event.currentTarget.naturalWidth;
-                const actualHeight = event.currentTarget.naturalHeight;
-                if (!actualWidth || !actualHeight || (actualWidth === loaded.width && actualHeight === loaded.height)) return;
-                const decodedImage = { ...loaded, width: actualWidth, height: actualHeight };
-                cache.current.set(loaded.key, decodedImage);
-                setLoaded(decodedImage);
-                onCutoutChange(decodedImage);
-              }}
-              onError={() => {
-                if (loaded.key === currentKey) {
-                  cache.current.delete(loaded.key);
-                  URL.revokeObjectURL(loaded.url);
-                  setLoaded(null);
-                  onCutoutChange(null);
-                  setFailure('invalid-response');
-                  setStatus('ready');
-                }
-              }}
-            />
+        {displayLoadedImage && view && (
+          <div ref={dragLayerRef} className="sky-viewer__image-layer">
+            {placements.map(({ layer, placement }) => placement && (
+              <img
+                key={layer.key}
+                className="sky-viewer__image"
+                src={layer.url}
+                style={{
+                  width: placement.width,
+                  height: placement.height,
+                  transform: `translate3d(${placement.left}px, ${placement.top}px, 0)`,
+                }}
+                alt={layer === loaded ? `SDSS DR18 cutout requested at RA ${layer.center.ra.toFixed(5)}°, Dec ${layer.center.dec.toFixed(5)}°` : ''}
+                aria-hidden={layer === loaded ? undefined : true}
+                draggable={false}
+                onLoad={(event) => {
+                  const actualWidth = event.currentTarget.naturalWidth;
+                  const actualHeight = event.currentTarget.naturalHeight;
+                  if (!actualWidth || !actualHeight || (actualWidth === layer.width && actualHeight === layer.height)) return;
+                  const decodedImage = { ...layer, width: actualWidth, height: actualHeight };
+                  cache.current.set(layer.key, decodedImage);
+                  setLayers((previous) => previous.map((item) => (item.key === layer.key ? decodedImage : item)));
+                  if (layer === loaded) onCutoutChange(decodedImage);
+                }}
+                onError={() => {
+                  cache.current.delete(layer.key);
+                  URL.revokeObjectURL(layer.url);
+                  setLayers((previous) => previous.filter((item) => item.key !== layer.key));
+                  if (layer === loaded) {
+                    onCutoutChange(null);
+                    if (layer.key === currentKey) {
+                      setFailure('invalid-response');
+                      setStatus('ready');
+                    }
+                  }
+                }}
+              />
+            ))}
           </div>
         )}
 
@@ -336,7 +430,7 @@ export function ViewerCanvas({ view, crosshair, onDimensions, onCutoutChange, on
         )}
 
         {view && loaded && status === 'loading' && (
-          <div className="viewer-loading-pill" role="status"><LoaderCircle className="spin" aria-hidden="true" size={14} /> Loading requested view</div>
+          <div className="viewer-loading-pill" role="status"><LoaderCircle className="spin" aria-hidden="true" size={14} /> Loading sky imagery…</div>
         )}
         {showErrorPill && (
           <div className="viewer-error-pill" role="status">

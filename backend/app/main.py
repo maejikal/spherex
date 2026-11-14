@@ -1,0 +1,137 @@
+"""FastAPI application factory for the Sky Explorer backend."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from .api import health, images, objects, surveys, targets
+from .api.deps import Services
+from .config import Settings, get_settings
+from .models.errors import AppError
+from .providers.http import UpstreamClient
+from .providers.sdss import SDSSCatalogueProvider, SDSSImageProvider
+from .providers.sesame import SesameResolver
+from .services.catalogue_search import CatalogueSearchService
+from .services.image_cache import ImageCache
+from .services.image_service import ImageService
+from .services.object_resolver import ObjectResolverService
+from .services.target_service import DEFAULT_DATA_FILE, TargetService
+
+log = logging.getLogger("skyexplorer")
+
+EXPOSED_HEADERS = [
+    "X-Source-URL",
+    "X-Projection",
+    "X-Coordinate-Frame",
+    "X-Observation-Time",
+    "X-Wavelength",
+    "X-Survey-Release",
+    "X-Backend-Cache",
+    "X-Image-Resampled",
+]
+
+
+def _error_response(code: str, message: str, status: int, headers: dict[str, str] | None = None) -> JSONResponse:
+    merged = {"Cache-Control": "no-store", **(headers or {})}
+    return JSONResponse({"error": {"code": code, "message": message}}, status_code=status, headers=merged)
+
+
+def build_services(settings: Settings, targets_file: Path = DEFAULT_DATA_FILE) -> Services:
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=settings.connect_timeout, read=settings.read_timeout, write=5.0, pool=5.0),
+        headers={"User-Agent": settings.user_agent},
+        follow_redirects=False,
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+    )
+    semaphore = asyncio.Semaphore(settings.max_upstream_concurrency)
+
+    def upstream(service: str) -> UpstreamClient:
+        return UpstreamClient(
+            client, service=service, retries=settings.max_retries, backoff_base=settings.retry_backoff_base, semaphore=semaphore
+        )
+
+    sdss = SDSSImageProvider(upstream("SDSS"), settings)
+    sesame = SesameResolver(upstream("CDS Sesame"), settings)
+    cache = ImageCache(
+        settings.cache_dir, ttl_seconds=settings.image_cache_ttl_seconds, max_bytes=settings.image_cache_max_bytes
+    )
+    return Services(
+        http=client,
+        images=ImageService({sdss.survey.id: sdss}, cache),
+        sdss=sdss,
+        sesame=sesame,
+        resolver=ObjectResolverService(sesame, settings),
+        catalogue=CatalogueSearchService(SDSSCatalogueProvider(upstream("SDSS catalogue"), settings), settings),
+        targets=TargetService(targets_file),
+    )
+
+
+def create_app(settings: Settings | None = None, targets_file: Path = DEFAULT_DATA_FILE) -> FastAPI:
+    settings = settings or get_settings()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        services = build_services(settings, targets_file)
+        app.state.services = services
+        try:
+            yield
+        finally:
+            await services.http.aclose()
+
+    app = FastAPI(
+        title="Sky Explorer API",
+        version="0.1.0",
+        description="Backend for the Sky Explorer frontend. Serves real SDSS DR18 imagery and catalogue data; "
+        "resolves names through CDS Sesame. No data is fabricated.",
+        lifespan=lifespan,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_methods=["GET"],
+        allow_headers=["Accept", "Content-Type"],
+        expose_headers=EXPOSED_HEADERS,
+    )
+
+    @app.exception_handler(AppError)
+    async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:
+        if exc.status_code >= 500:
+            log.warning("%s: %s", exc.code, exc.message, exc_info=exc.__cause__)
+        return _error_response(exc.code, exc.message, exc.status_code, exc.headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+        parts = []
+        for err in exc.errors():
+            loc = ".".join(str(p) for p in err["loc"] if p != "query")
+            parts.append(f"{loc}: {err['msg']}")
+        return _error_response("invalid_parameters", "Invalid request parameters. " + "; ".join(parts), 422)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = "not_found" if exc.status_code == 404 else "http_error"
+        return _error_response(code, str(exc.detail), exc.status_code)
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+        log.exception("unhandled error on %s", request.url.path, exc_info=exc)
+        return _error_response("internal_error", "An unexpected error occurred.", 500)
+
+    for router in (health.router, surveys.router, images.router, objects.router, targets.router):
+        app.include_router(router, prefix="/api")
+
+    return app
+
+
+app = create_app()
