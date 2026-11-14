@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Move, X } from 'lucide-react';
-
-type Placement = 'left-top' | 'left-bottom' | 'right-top';
+import { initialPosition } from '../state/windows.ts';
+import type { Placement } from '../state/windows.ts';
 
 interface ToolWindowProps {
   id: string;
@@ -10,6 +10,11 @@ interface ToolWindowProps {
   subtitle: string;
   open: boolean;
   placement: Placement;
+  /** For `placement="beside"`: id of the window to sit next to on first open. */
+  anchorId?: string;
+  /** Stacking value from the app's window order; a pointer-down on the window raises it. */
+  zIndex?: number;
+  onFocus?: () => void;
   workspaceRef: { current: HTMLDivElement | null };
   onClose: () => void;
   children: ReactNode;
@@ -26,6 +31,9 @@ export function ToolWindow({
   subtitle,
   open,
   placement,
+  anchorId,
+  zIndex,
+  onFocus,
   workspaceRef,
   onClose,
   children,
@@ -41,11 +49,21 @@ export function ToolWindow({
     const panel = panelRef.current;
     if (!workspace || !panel) return;
 
-    const gap = 16;
-    const x = placement === 'right-top' ? workspace.clientWidth - panel.offsetWidth - gap : gap;
-    const y = placement === 'left-bottom' ? workspace.clientHeight - panel.offsetHeight - gap : gap;
-    setPosition(clampPosition({ x, y }, workspace, panel));
-  }, [open, placement, position, workspaceRef]);
+    // Only the first open is placed automatically; afterwards `position` holds wherever the user left it.
+    const workspaceBox = workspace.getBoundingClientRect();
+    const anchorElement = anchorId ? document.getElementById(anchorId) : null;
+    const anchorRect = anchorElement?.getBoundingClientRect();
+    const anchor = anchorRect && anchorRect.width > 0
+      ? { x: anchorRect.left - workspaceBox.left, y: anchorRect.top - workspaceBox.top, width: anchorRect.width, height: anchorRect.height }
+      : null;
+    const next = initialPosition({
+      placement,
+      workspace: { width: workspace.clientWidth, height: workspace.clientHeight },
+      panel: { width: panel.offsetWidth, height: panel.offsetHeight },
+      anchor,
+    });
+    setPosition(clampPosition(next, workspace, panel));
+  }, [open, placement, anchorId, position, workspaceRef]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -86,7 +104,10 @@ export function ToolWindow({
         top: position ? position.y : placement === 'left-bottom' ? undefined : 16,
         bottom: !position && placement === 'left-bottom' ? 16 : undefined,
         visibility: 'visible',
+        zIndex,
       }}
+      onPointerDownCapture={onFocus}
+      onFocusCapture={onFocus}
     >
       <header
         className="tool-window__header"

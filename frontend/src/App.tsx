@@ -18,10 +18,10 @@ import { defaultFrame } from './sky/spherex/channels.ts';
 import { SPHEREX_HIPS_URL, SPHEREX_SURVEY_ID } from './sky/spherex/config.ts';
 import { fetchSurveyInfo } from './sky/spherex/properties.ts';
 import { parseViewSearch, serializeViewSearch } from './state/urlView.ts';
+import { initialPanels, raise, togglePanel as toggleVisibility, zIndexFor } from './state/windows.ts';
+import type { PanelId, PanelVisibility } from './state/windows.ts';
 import { useExplorerStore } from './state/explorerStore.ts';
 
-type PanelId = 'find' | 'view' | 'inspect';
-type PanelVisibility = Record<PanelId, boolean>;
 
 export default function App() {
   const view = useExplorerStore((state) => state.view);
@@ -40,10 +40,10 @@ export default function App() {
   const [viewerStatus, setViewerStatus] = useState<ViewerStatus>({ loading: false, tileError: null });
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [shareFallback, setShareFallback] = useState<string | null>(null);
-  const [panels, setPanels] = useState<PanelVisibility>(() => {
-    const isNarrow = window.matchMedia('(max-width: 760px)').matches;
-    return { find: true, view: !isNarrow, inspect: !isNarrow };
-  });
+  // A new session opens only Find. Nothing below reopens View or Inspect except the user (toolbar, or clicking the sky).
+  const [panels, setPanels] = useState<PanelVisibility>(initialPanels);
+  const [windowOrder, setWindowOrder] = useState<PanelId[]>(['find', 'view', 'inspect']);
+  const bringToFront = useCallback((id: PanelId) => setWindowOrder((order) => raise(order, id)), []);
 
   const health = useQuery({
     queryKey: ['api', 'health'],
@@ -174,10 +174,13 @@ export default function App() {
     setSelection({ ...coordinates, accuracy: 'projection' });
     setAnnouncement(`Selected position: RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°.`);
     setPanels((current) => ({ ...current, inspect: true }));
+    setWindowOrder((order) => raise(order, 'inspect'));
   }, [setSelection]);
 
   const togglePanel = (panel: PanelId) => {
-    setPanels((current) => ({ ...current, [panel]: !current[panel] }));
+    // Opening a window also brings it to the front; closing one leaves the others untouched.
+    if (!panels[panel]) setWindowOrder((order) => raise(order, panel));
+    setPanels((current) => toggleVisibility(current, panel));
   };
 
   const shareView = async () => {
@@ -252,6 +255,8 @@ export default function App() {
           title="Find a position"
           subtitle="Coordinates · verified targets · object resolver"
           open={panels.find}
+          zIndex={zIndexFor(windowOrder, 'find')}
+          onFocus={() => bringToFront('find')}
           placement="left-top"
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, find: false }))}
@@ -264,7 +269,10 @@ export default function App() {
           title="View controls"
           subtitle="Wavelength · zoom · overlays"
           open={panels.view}
-          placement="left-bottom"
+          zIndex={zIndexFor(windowOrder, 'view')}
+          onFocus={() => bringToFront('view')}
+          placement="beside"
+          anchorId="find"
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, view: false }))}
         >
@@ -293,6 +301,8 @@ export default function App() {
           title="Inspect position"
           subtitle="Clicked coordinates · catalogue · provenance"
           open={panels.inspect}
+          zIndex={zIndexFor(windowOrder, 'inspect')}
+          onFocus={() => bringToFront('inspect')}
           placement="right-top"
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, inspect: false }))}
