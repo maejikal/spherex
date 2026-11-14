@@ -21,6 +21,7 @@ import { parseViewSearch, serializeViewSearch } from './state/urlView.ts';
 import { initialPanels, raise, togglePanel as toggleVisibility, zIndexFor } from './state/windows.ts';
 import type { PanelId, PanelVisibility } from './state/windows.ts';
 import { useExplorerStore } from './state/explorerStore.ts';
+import { sameSkyView } from './state/viewEquality.ts';
 
 
 export default function App() {
@@ -35,15 +36,38 @@ export default function App() {
   const setCrosshair = useExplorerStore((state) => state.setCrosshair);
 
   const workspaceRef = useRef<HTMLDivElement>(null);
+  // Presentation only: switching layouts never replaces the viewer or its celestial state.
+  const [layout, setLayout] = useState<'floating' | 'docked'>('floating');
+  const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 760px)').matches);
+  const movableTools = layout === 'floating' && !compact;
   const [homeView, setHomeView] = useState<ExplorerView | null>(null);
   const [dimensions, setDimensions] = useState({ width: 1024, height: 768 });
   const [viewerStatus, setViewerStatus] = useState<ViewerStatus>({ loading: false, tileError: null });
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [shareFallback, setShareFallback] = useState<string | null>(null);
+  const [analysisRequested, setAnalysisRequested] = useState(false);
   // A new session opens only Find. Nothing below reopens View or Inspect except the user (toolbar, or clicking the sky).
   const [panels, setPanels] = useState<PanelVisibility>(initialPanels);
   const [windowOrder, setWindowOrder] = useState<PanelId[]>(['find', 'view', 'inspect']);
   const bringToFront = useCallback((id: PanelId) => setWindowOrder((order) => raise(order, id)), []);
+
+  useEffect(() => {
+    const narrowViewport = window.matchMedia('(max-width: 760px)');
+    const keepOnePanelOpen = () => {
+      setCompact(narrowViewport.matches);
+      if (!narrowViewport.matches) return;
+      setPanels((current) => {
+        const openPanels = (['find', 'view', 'inspect'] as const).filter((panel) => current[panel]);
+        if (openPanels.length < 2) return current;
+        const next: PanelVisibility = { find: false, view: false, inspect: false };
+        next[openPanels[0] ?? 'find'] = true;
+        return next;
+      });
+    };
+    keepOnePanelOpen();
+    narrowViewport.addEventListener('change', keepOnePanelOpen);
+    return () => narrowViewport.removeEventListener('change', keepOnePanelOpen);
+  }, []);
 
   const health = useQuery({
     queryKey: ['api', 'health'],
@@ -85,6 +109,7 @@ export default function App() {
       setView(previousView, 'none');
       setHomeView(previousView);
       setSelection(null);
+      setAnalysisRequested(false);
       setAnnouncement(null);
     };
     window.addEventListener('popstate', handlePopState);
@@ -109,7 +134,9 @@ export default function App() {
     };
     setView(nextView, 'push');
     setHomeView(nextView);
-    setSelection(null);
+    // Keep a cross marker on the requested position after recentering.
+    setSelection({ ...coordinates, accuracy: 'projection' });
+    setAnalysisRequested(false);
     setAnnouncement(label
       ? `Requested ${label} at RA ${formatCoordinate(nextView.ra, 4)}°, Dec ${formatCoordinate(nextView.dec, 4)}°.`
       : `Requested RA ${formatCoordinate(nextView.ra, 4)}°, Dec ${formatCoordinate(nextView.dec, 4)}°.`);
@@ -119,9 +146,14 @@ export default function App() {
   // Pan/zoom made inside Aladin by the user. `replace` keeps continuous panning from flooding history.
   const applyViewerView = useCallback((next: { ra: number; dec: number; scale: number }) => {
     const current = useExplorerStore.getState().view;
-    if (!current) return;
+    if (!current || sameSkyView(current, next)) return;
+    const raDistance = Math.abs(((current.ra - next.ra + 540) % 360) - 180);
+    if (raDistance > 1e-6 || Math.abs(current.dec - next.dec) > 1e-6) {
+      setSelection(null);
+      setAnalysisRequested(false);
+    }
     setView({ ...current, ...next }, 'replace');
-  }, [setView]);
+  }, [setSelection, setView]);
 
   const changeChannel = useCallback((frame: number) => {
     const current = useExplorerStore.getState().view;
@@ -138,6 +170,8 @@ export default function App() {
     const center = panCenterByDrag(current, current.scale, dragX, dragY);
     const next = { ...current, ...center };
     setView(next, 'push');
+    setSelection(null);
+    setAnalysisRequested(false);
     setAnnouncement(`View centered at RA ${formatCoordinate(next.ra, 4)}°, Dec ${formatCoordinate(next.dec, 4)}°.`);
   }, [setSelection, setView]);
 
@@ -167,20 +201,62 @@ export default function App() {
     const reset = { ...homeView, grid: current?.grid ?? homeView.grid };
     setView(reset, 'push');
     setSelection(null);
+    setAnalysisRequested(false);
     setAnnouncement('View reset to initial center and scale.');
   }, [homeView, setSelection, setView]);
 
   const selectPosition = useCallback((coordinates: SkyCoordinates) => {
     setSelection({ ...coordinates, accuracy: 'projection' });
-    setAnnouncement(`Selected position: RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°.`);
-    setPanels((current) => ({ ...current, inspect: true }));
+    setAnalysisRequested(false);
+    setAnnouncement(`Selected position: RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°. Double-click to center; choose Analyze area to search nearby SIMBAD objects.`);
+  }, [setSelection]);
+
+  const centerPosition = useCallback((coordinates: SkyCoordinates) => {
+    const current = useExplorerStore.getState().view;
+    if (!current) return;
+    const raDistance = Math.abs(((current.ra - coordinates.ra + 540) % 360) - 180);
+    if (raDistance > 1e-6 || Math.abs(current.dec - coordinates.dec) > 1e-6) {
+      setView({ ...current, ...coordinates }, 'push');
+    }
+    setAnnouncement(`Centered view at RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°.`);
+    setShareFallback(null);
+  }, [setView]);
+
+  const analyzeSelection = useCallback(() => {
+    const selected = useExplorerStore.getState().selection;
+    if (!selected) return;
+    setAnalysisRequested(true);
+    setPanels((current) => {
+      if (window.matchMedia('(max-width: 760px)').matches) {
+        return { find: false, view: false, inspect: true };
+      }
+      return { ...current, inspect: true };
+    });
     setWindowOrder((order) => raise(order, 'inspect'));
+    setAnnouncement(`Searching SIMBAD around RA ${formatCoordinate(selected.ra, 5)}°, Dec ${formatCoordinate(selected.dec, 5)}°.`);
+  }, []);
+
+  const copySelection = useCallback(async () => {
+    const selected = useExplorerStore.getState().selection;
+    if (!selected) return;
+    const value = `${formatCoordinate(selected.ra, 6)}°, ${selected.dec >= 0 ? '+' : ''}${formatCoordinate(selected.dec, 6)}°`;
+    try {
+      await navigator.clipboard.writeText(value);
+      setAnnouncement('Selected coordinates copied.');
+    } catch {
+      setAnnouncement(`Selected coordinates: RA ${formatCoordinate(selected.ra, 6)}°, Dec ${selected.dec >= 0 ? '+' : ''}${formatCoordinate(selected.dec, 6)}°.`);
+    }
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelection(null);
+    setAnalysisRequested(false);
   }, [setSelection]);
 
   const togglePanel = (panel: PanelId) => {
-    // Opening a window also brings it to the front; closing one leaves the others untouched.
+    // Opening a window brings it to the front; closing one leaves others untouched.
     if (!panels[panel]) setWindowOrder((order) => raise(order, panel));
-    setPanels((current) => toggleVisibility(current, panel));
+    setPanels((current) => toggleVisibility(current, panel, compact));
   };
 
   const shareView = async () => {
@@ -213,6 +289,18 @@ export default function App() {
         </div>
         <span className="survey-badge">SPHEREx DR1</span>
         <div className="topbar__spacer" />
+        {!compact && (
+          <fieldset className="layout-switch">
+            <legend className="sr-only">Workspace layout</legend>
+            <span className="layout-switch__label" aria-hidden="true">Layout</span>
+            {(['floating', 'docked'] as const).map((value) => (
+              <label key={value} className={`layout-choice${layout === value ? ' layout-choice--active' : ''}`}>
+                <input type="radio" name="workspace-layout" value={value} checked={layout === value} onChange={() => setLayout(value)} />
+                <span>{value === 'floating' ? 'Floating' : 'Docked'}</span>
+              </label>
+            ))}
+          </fieldset>
+        )}
         <div className="tool-toolbar" role="group" aria-label="Explorer tools">
           <ToolbarButton id="find" label="Find" active={panels.find} onClick={() => togglePanel('find')}><Search size={16} aria-hidden="true" /></ToolbarButton>
           <ToolbarButton id="view" label="View" active={panels.view} onClick={() => togglePanel('view')}><SlidersHorizontal size={16} aria-hidden="true" /></ToolbarButton>
@@ -234,7 +322,14 @@ export default function App() {
         )}
       </header>
 
-      <main className="workspace" ref={workspaceRef} aria-label="Interactive sky explorer workspace">
+      <main
+        className={`workspace workspace--${layout}${compact ? ' workspace--compact' : ''}`}
+        data-left-open={panels.find || panels.view}
+        data-left-stacked={panels.find && panels.view}
+        data-inspect-open={panels.inspect}
+        ref={workspaceRef}
+        aria-label="Interactive sky explorer workspace"
+      >
         <AladinSkyViewer
           view={view}
           survey={survey.data}
@@ -242,10 +337,15 @@ export default function App() {
           surveyError={survey.error}
           onRetrySurvey={() => void survey.refetch()}
           selection={selection}
+          analysisRequested={analysisRequested}
           crosshair={crosshair}
           onDimensions={updateDimensions}
           onUserView={applyViewerView}
           onSelect={selectPosition}
+          onCenter={centerPosition}
+          onAnalyze={analyzeSelection}
+          onCopySelection={copySelection}
+          onClearSelection={clearSelection}
           onKeyPan={panDirection}
           onStatus={updateViewerStatus}
         />
@@ -253,11 +353,11 @@ export default function App() {
         <ToolWindow
           id="find"
           title="Find a position"
-          subtitle="Coordinates · verified targets · object resolver"
           open={panels.find}
           zIndex={zIndexFor(windowOrder, 'find')}
           onFocus={() => bringToFront('find')}
           placement="left-top"
+          movable={movableTools}
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, find: false }))}
         >
@@ -267,12 +367,12 @@ export default function App() {
         <ToolWindow
           id="view"
           title="View controls"
-          subtitle="Wavelength · zoom · overlays"
           open={panels.view}
           zIndex={zIndexFor(windowOrder, 'view')}
           onFocus={() => bringToFront('view')}
           placement="beside"
           anchorId="find"
+          movable={movableTools}
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, view: false }))}
         >
@@ -299,15 +399,15 @@ export default function App() {
         <ToolWindow
           id="inspect"
           title="Inspect position"
-          subtitle="Clicked coordinates · catalogue · provenance"
           open={panels.inspect}
           zIndex={zIndexFor(windowOrder, 'inspect')}
           onFocus={() => bringToFront('inspect')}
           placement="right-top"
+          movable={movableTools}
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, inspect: false }))}
         >
-          <InspectPanel selection={selection} view={view} survey={survey.data} loading={viewerStatus.loading} />
+          <InspectPanel selection={selection} view={view} survey={survey.data} loading={viewerStatus.loading} analysisEnabled={analysisRequested} />
         </ToolWindow>
 
         {announcement && <p className="workspace-announcement" role="status" aria-live="polite">{announcement}</p>}
@@ -315,7 +415,6 @@ export default function App() {
       <footer className="app-footer">
         <span><Compass aria-hidden="true" size={13} /> ICRS / equatorial coordinates</span>
         <span>SPHEREx DR1 all-sky cube · NASA/IPAC IRSA HiPS · rendered with Aladin Lite (CDS)</span>
-        <span className="app-footer__future">Wavelength channels of a combined cube, not observation times</span>
       </footer>
     </div>
   );

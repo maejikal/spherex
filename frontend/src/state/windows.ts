@@ -8,7 +8,8 @@ export function initialPanels(): PanelVisibility {
   return { find: true, view: false, inspect: false };
 }
 
-export function togglePanel(panels: PanelVisibility, id: PanelId): PanelVisibility {
+export function togglePanel(panels: PanelVisibility, id: PanelId, exclusive = false): PanelVisibility {
+  if (exclusive && !panels[id]) return { find: false, view: false, inspect: false, [id]: true };
   return { ...panels, [id]: !panels[id] };
 }
 

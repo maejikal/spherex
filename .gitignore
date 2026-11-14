@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 
 .codex/
+AGENTS.md
 
 # Local operating-system and editor files
 .DS_Store

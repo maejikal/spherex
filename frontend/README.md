@@ -1,7 +1,7 @@
 # Sky Explorer frontend
 
 React + strict TypeScript/Vite UI. Sky imagery is rendered by **Aladin Lite 3.8.2** (pinned; the version IRSA's own SPHEREx landing page uses) from the
-NASA/IPAC SPHEREx all-sky cube HiPS. The existing floating Find / View / Inspect windows, dark theme and search experience are unchanged; Aladin's own
+NASA/IPAC SPHEREx all-sky cube HiPS. Find / View / Inspect share a dark observatory theme and can float or dock beside the imagery. Aladin's own
 controls are disabled so there is a single set of controls.
 
 ## Run
@@ -13,6 +13,28 @@ npm run typecheck && npm test && npm run build
 
 `/api/*` is proxied to `http://127.0.0.1:8000` (set `VITE_API_BASE_URL` to change). The sky itself needs no backend: tiles come straight from IRSA
 (`VITE_SPHEREX_HIPS_URL` overrides the HiPS URL). Search, targets and catalogue lookup use the FastAPI service.
+
+## Typography
+
+The interface uses self-hosted **Oxanium** (variable weights 200–800), with system sans-serif fallbacks and `font-display: swap`.
+Tabular lining figures keep coordinates and measurements aligned. The font is preloaded locally; no Google Fonts runtime requests or package dependencies.
+Assets, source URL and SIL Open Font License are in `public/fonts/oxanium/`. The earlier comparison remains at `/type-study/index.html`.
+
+## Compare workspace layouts
+
+Use **Layout: Floating / Docked** in the desktop header. Floating remains the default; the choice is session-only and is not part of shared sky URLs.
+
+- **Floating:** existing draggable, keyboard-movable windows retain their positions when switching back from Docked.
+- **Docked:** Find and View use the left rail (stacked when both are open); Inspect uses the right rail. Closing tools returns their space to the sky.
+- **Mobile (760px and below):** either preference uses one scrollable bottom sheet, with a reachable sky viewport above it. Toolbar buttons switch sheets.
+
+Layout is local React presentation state, separate from the Zustand celestial view. The same viewer and tool instances remain mounted during desktop
+layout changes, preserving search drafts, selection, channel, overlays, center and scale. The viewport gets narrower when docking: angular field of view
+changes to retain the same arcseconds per pixel. `src/workspace.css` owns the presentation layer; no provider or coordinate changes are needed.
+
+Manual checks: open a destination; enable a grid in View; type an unsubmitted object name in Find; switch layouts; verify the draft, grid, center, scale
+and URL remain unchanged. Open all three tools to check stacked scrolling. At 390px and 320px, verify one sheet opens at a time, its contents scroll,
+the close button returns space to the sky, and no horizontal scrolling occurs.
 
 ## Structure
 

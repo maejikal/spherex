@@ -14,6 +14,7 @@ export interface AladinControllerCallbacks {
   /** User navigation finished (pan/zoom settled). Never fired for programmatic changes. */
   onUserView: (view: ViewState) => void;
   onClick: (position: { ra: number; dec: number }) => void;
+  onDoubleClick: (position: { ra: number; dec: number }) => void;
   onHover: (position: { ra: number; dec: number } | null) => void;
   /** True while tiles for the latest navigation or channel change are still arriving. */
   onLoading: (loading: boolean) => void;
@@ -63,6 +64,7 @@ export class AladinController {
   private tileFailures: number[] = [];
   private hoverFrame: number | null = null;
   private pendingHover: { ra: number; dec: number } | null = null;
+  private lastClick: { time: number; x: number; y: number } | null = null;
 
   private constructor(
     A: AladinModule['default'],
@@ -144,9 +146,20 @@ export class AladinController {
     };
     aladin.on('positionChanged', userChange);
     aladin.on('zoomChanged', userChange);
-    aladin.on('click', ((event: { ra: number; dec: number; isDragging?: boolean }) => {
+    aladin.on('click', ((event: { ra: number; dec: number; x: number; y: number; isDragging?: boolean }) => {
       if (event.isDragging || !Number.isFinite(event.ra) || !Number.isFinite(event.dec)) return;
-      options.callbacks.onClick({ ra: normalizeRightAscension(event.ra), dec: event.dec });
+      const position = { ra: normalizeRightAscension(event.ra), dec: event.dec };
+      options.callbacks.onClick(position);
+
+      const now = performance.now();
+      const previous = this.lastClick;
+      const isDoubleClick = previous !== null && now - previous.time <= 500 && Math.hypot(event.x - previous.x, event.y - previous.y) <= 24;
+      if (isDoubleClick) {
+        this.lastClick = null;
+        options.callbacks.onDoubleClick(position);
+      } else {
+        this.lastClick = { time: now, x: event.x, y: event.y };
+      }
     }) as never);
     aladin.on('mouseMove', ((event: { ra: number; dec: number }) => {
       this.pendingHover = Number.isFinite(event?.ra) ? { ra: normalizeRightAscension(event.ra), dec: event.dec } : null;
@@ -171,6 +184,22 @@ export class AladinController {
 
   private selectFrame(hips: AladinHiPS, frame: number): void {
     hips.setFrequency({ value: frequencyForFrame(this.options.survey, frame), unit: 'Hz' });
+  }
+
+  /** Project an ICRS position into viewer-local pixels for anchoring overlays. */
+  getScreenPosition(position: { ra: number; dec: number }): { x: number; y: number } | null {
+    try {
+      const aladin = this.aladin as unknown as {
+        world2pix?: (ra: number, dec: number) => ArrayLike<number> | null;
+      };
+      const pixel = aladin.world2pix?.call(this.aladin, position.ra, position.dec);
+      if (!pixel || pixel.length < 2) return null;
+      const [x, y] = [pixel[0], pixel[1]];
+      if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return { x, y };
+    } catch {
+      return null;
+    }
   }
 
   /** Current viewer state, or null if the instance cannot report it yet. */

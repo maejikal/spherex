@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertCircle, LoaderCircle, MousePointer2, Move, RotateCcw } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AlertCircle, Copy, LoaderCircle, MousePointer2, Move, RotateCcw, Search, X } from 'lucide-react';
 import type { ExplorerView } from '../api/types.ts';
 import { AladinController } from '../sky/aladin/controller.ts';
 import type { ViewState } from '../sky/aladin/controller.ts';
@@ -22,11 +22,16 @@ interface AladinSkyViewerProps {
   surveyError: Error | null;
   onRetrySurvey: () => void;
   selection: SkyCoordinates | null;
+  analysisRequested: boolean;
   crosshair: boolean;
   onDimensions: (dimensions: { width: number; height: number }) => void;
   /** Pan/zoom made by the user inside Aladin, reported after it settles. */
   onUserView: (view: { ra: number; dec: number; scale: number }) => void;
   onSelect: (coordinates: SkyCoordinates) => void;
+  onCenter: (coordinates: SkyCoordinates) => void;
+  onAnalyze: () => void;
+  onCopySelection: () => void;
+  onClearSelection: () => void;
   onKeyPan: (direction: 'north' | 'south' | 'east' | 'west') => void;
   onStatus: (status: ViewerStatus) => void;
 }
@@ -34,8 +39,8 @@ interface AladinSkyViewerProps {
 const MAX_FOV_DEGREES = 360;
 
 export function AladinSkyViewer({
-  view, survey, surveyPending, surveyError, onRetrySurvey, selection, crosshair,
-  onDimensions, onUserView, onSelect, onKeyPan, onStatus,
+  view, survey, surveyPending, surveyError, onRetrySurvey, selection, analysisRequested, crosshair,
+  onDimensions, onUserView, onSelect, onCenter, onAnalyze, onCopySelection, onClearSelection, onKeyPan, onStatus,
 }: AladinSkyViewerProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<AladinController | null>(null);
@@ -44,10 +49,35 @@ export function AladinSkyViewer({
   const [initError, setInitError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<SkyCoordinates | null>(null);
   const [status, setStatus] = useState<ViewerStatus>({ loading: false, tileError: null });
+  const actionTrayRef = useRef<HTMLDivElement>(null);
+  const [actionTrayPosition, setActionTrayPosition] = useState<{ left: number; top: number } | null>(null);
 
   // Latest props for long-lived Aladin callbacks (avoids stale closures and re-creating Aladin).
-  const latest = useRef({ view, size, onUserView, onSelect, onStatus });
-  latest.current = { view, size, onUserView, onSelect, onStatus };
+  const latest = useRef({ view, size, selection, onUserView, onSelect, onCenter, onStatus, status });
+  latest.current = { view, size, selection, onUserView, onSelect, onCenter, onStatus, status };
+
+  const updateActionTrayPosition = useCallback(() => {
+    const selected = latest.current.selection;
+    const surface = surfaceRef.current;
+    const tray = actionTrayRef.current;
+    const screenPosition = selected && controllerRef.current?.getScreenPosition(selected);
+    if (!selected || !surface || !tray || !screenPosition || screenPosition.x < 0 || screenPosition.y < 0 || screenPosition.x > surface.clientWidth || screenPosition.y > surface.clientHeight) {
+      setActionTrayPosition((current) => current === null ? current : null);
+      return;
+    }
+
+    const bounds = tray.getBoundingClientRect();
+    const edge = 8;
+    const gap = 16;
+    let left = screenPosition.x + gap;
+    let top = screenPosition.y + gap;
+    if (left + bounds.width > surface.clientWidth - edge) left = screenPosition.x - bounds.width - gap;
+    if (top + bounds.height > surface.clientHeight - edge) top = screenPosition.y - bounds.height - gap;
+    left = Math.min(Math.max(edge, left), Math.max(edge, surface.clientWidth - bounds.width - edge));
+    top = Math.min(Math.max(edge, top), Math.max(edge, surface.clientHeight - bounds.height - edge));
+    const next = { left: Math.round(left), top: Math.round(top) };
+    setActionTrayPosition((current) => current?.left === next.left && current.top === next.top ? current : next);
+  }, []);
 
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
@@ -98,10 +128,23 @@ export function AladinSkyViewer({
           const width = latest.current.size.width;
           if (width > 0) latest.current.onUserView({ ra: next.ra, dec: next.dec, scale: clampScale(scaleFromFov(next.fov, width)) });
         },
-        onClick: (position) => latest.current.onSelect(position),
+        onClick: (position) => {
+          const current = latest.current;
+          if (!current.status.loading && !current.status.tileError) current.onSelect(position);
+        },
+        onDoubleClick: (position) => {
+          const current = latest.current;
+          if (!current.status.loading && !current.status.tileError) current.onCenter(position);
+        },
         onHover: setCursor,
-        onLoading: (loading) => setStatus((current) => (current.loading === loading ? current : { ...current, loading })),
-        onTileErrors: (message) => setStatus((current) => (current.tileError === message ? current : { ...current, tileError: message })),
+        onLoading: (loading) => {
+          if (loading) setCursor(null);
+          setStatus((current) => (current.loading === loading ? current : { ...current, loading }));
+        },
+        onTileErrors: (message) => {
+          if (message) setCursor(null);
+          setStatus((current) => (current.tileError === message ? current : { ...current, tileError: message }));
+        },
       },
     })
       .then((created) => {
@@ -158,6 +201,10 @@ export function AladinSkyViewer({
     controllerRef.current?.setSelection(selRa === undefined || selDec === undefined ? null : { ra: selRa, dec: selDec });
   }, [ready, selRa, selDec]);
 
+  useLayoutEffect(() => {
+    updateActionTrayPosition();
+  }, [updateActionTrayPosition, selection?.ra, selection?.dec, view?.ra, view?.dec, view?.scale, size.width, size.height, ready, status.loading, status.tileError]);
+
   useEffect(() => {
     onStatus(status);
   }, [status, onStatus]);
@@ -168,6 +215,7 @@ export function AladinSkyViewer({
   const errorText = initError ?? surveyError?.message ?? 'The SPHEREx HiPS service could not be reached.';
   const showConnecting = Boolean(view && !survey && surveyPending && !showError);
   const interactive = ready && !showError;
+  const canInspect = interactive && !status.loading && !status.tileError;
 
   return (
     <section className="viewer-frame" aria-label="SPHEREx sky viewer">
@@ -175,7 +223,7 @@ export function AladinSkyViewer({
         ref={surfaceRef}
         className={`sky-viewer__surface sky-viewer__surface--aladin${interactive ? ' sky-viewer__surface--ready' : ''}`}
         role="region"
-        aria-label="Sky image. Drag to pan, scroll to zoom, use arrow keys to navigate, or click to inspect coordinates."
+        aria-label="Sky image. Drag to pan, scroll to zoom, use arrow keys to navigate, single-click to select, or double-click to center."
         tabIndex={interactive ? 0 : -1}
         onKeyDown={(event) => {
           if (!interactive) return;
@@ -184,14 +232,39 @@ export function AladinSkyViewer({
           if (direction) {
             event.preventDefault();
             onKeyPan(direction);
-          } else if (event.key === 'Enter') {
+          } else if (event.key === 'Enter' && canInspect) {
             const center = controllerRef.current?.getView();
             if (center) onSelect({ ra: center.ra, dec: center.dec });
           }
         }}
+        onPointerMove={updateActionTrayPosition}
         onPointerLeave={() => setCursor(null)}
       >
         {crosshair && interactive && <div className="sky-viewer__crosshair" aria-hidden="true"><span /><span /></div>}
+
+        {selection && canInspect && (
+          <div
+            ref={actionTrayRef}
+            className="viewer-analysis-actions"
+            role="group"
+            aria-label="Selected area actions"
+            style={{ left: actionTrayPosition?.left ?? 0, top: actionTrayPosition?.top ?? 0, visibility: actionTrayPosition ? 'visible' : 'hidden' }}
+          >
+            <div className="viewer-analysis-actions__position">
+              <span>SELECTED POSITION</span>
+              <strong>{formatCoordinate(selection.ra, 5)}° · {selection.dec >= 0 ? '+' : ''}{formatCoordinate(selection.dec, 5)}°</strong>
+            </div>
+            <button className="button button--primary button--compact" type="button" onClick={onAnalyze} title="Search SIMBAD around this position">
+              <Search aria-hidden="true" size={14} />{analysisRequested ? 'View analysis' : 'Analyze area'}
+            </button>
+            <button className="icon-button viewer-analysis-actions__copy" type="button" onClick={onCopySelection} aria-label="Copy selected coordinates" title="Copy selected coordinates">
+              <Copy aria-hidden="true" size={14} />
+            </button>
+            <button className="icon-button viewer-analysis-actions__close" type="button" onClick={onClearSelection} aria-label="Clear selected area" title="Clear selected area">
+              <X aria-hidden="true" size={14} />
+            </button>
+          </div>
+        )}
 
         {!view && (
           <div className="viewer-empty">
@@ -238,7 +311,7 @@ export function AladinSkyViewer({
             <span className="viewer-attribution__hint">Aladin Lite · CDS</span>
           </div>
         )}
-        {cursor && interactive && (
+        {cursor && canInspect && (
           <div className="viewer-cursor" aria-live="off">
             Cursor · RA {formatCoordinate(cursor.ra)}° · Dec {cursor.dec >= 0 ? '+' : ''}{formatCoordinate(cursor.dec)}°
           </div>
@@ -247,7 +320,7 @@ export function AladinSkyViewer({
       <div className="viewer-instructions" aria-hidden="true">
         <span><Move size={13} /> Drag or use arrow keys to pan</span>
         <span><span aria-hidden="true">↕</span> Wheel to zoom</span>
-        <span><MousePointer2 size={13} /> Click the sky to inspect coordinates</span>
+        <span><MousePointer2 size={13} /> Move for coordinates · double-click to center</span>
       </div>
     </section>
   );

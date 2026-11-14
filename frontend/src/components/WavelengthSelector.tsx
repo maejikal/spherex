@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react';
+import { AlertCircle, LoaderCircle } from 'lucide-react';
 import {
   adjacentChannel,
   allChannels,
@@ -38,8 +38,7 @@ export function WavelengthSelector({ survey, surveyPending, surveyError, frame, 
     return (
       <section className="panel-section" aria-labelledby="wavelength-heading">
         <div className="section-heading">
-          <h3 id="wavelength-heading">Infrared wavelength</h3>
-          <p>SPHEREx spectral channels from the NASA/IPAC all-sky cube.</p>
+          <h3 id="wavelength-heading">Wavelength</h3>
         </div>
         {surveyPending && <p className="inline-status" role="status"><LoaderCircle className="spin" aria-hidden="true" size={15} /> Reading channel list…</p>}
         {surveyError && <p className="inline-error" role="alert"><AlertCircle aria-hidden="true" size={15} />Wavelength channels unavailable: {surveyError.message}</p>}
@@ -51,9 +50,6 @@ export function WavelengthSelector({ survey, surveyPending, surveyError, frame, 
   const current = frame === null ? null : channelForFrame(survey, frame);
   const usable = channels.filter((channel) => channel.hasData).length;
   const bands = [...new Set(channels.map((channel) => channel.band))];
-  const previous = frame === null ? null : adjacentChannel(survey, frame, -1);
-  const next = frame === null ? null : adjacentChannel(survey, frame, 1);
-
   const commitSlider = (value: number, direction: 1 | -1) => {
     setSliderFrame(value);
     if (commitTimer.current !== null) window.clearTimeout(commitTimer.current);
@@ -68,13 +64,13 @@ export function WavelengthSelector({ survey, surveyPending, surveyError, frame, 
 
   return (
     <section className="panel-section" aria-labelledby="wavelength-heading">
-      <div className="section-heading">
-        <h3 id="wavelength-heading">Infrared wavelength</h3>
-        <p>{usable} of {survey.depth} SPHEREx channels have imagery in this all-sky cube.</p>
+      <div className="section-heading view-section-heading">
+        <h3 id="wavelength-heading">Wavelength</h3>
+        <p>{usable} of {survey.depth} channels have imagery</p>
       </div>
 
       <label className="field">
-        <span>Channel</span>
+        <span>Choose channel</span>
         <select
           className="select-input"
           value={frame ?? ''}
@@ -97,58 +93,38 @@ export function WavelengthSelector({ survey, surveyPending, surveyError, frame, 
         </select>
       </label>
 
-      <div className="wavelength-stepper">
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Previous (shorter) wavelength channel"
-          title="Shorter wavelength"
-          disabled={disabled || !previous}
-          onClick={() => previous && onChange(previous.frame)}
-        ><ChevronLeft size={15} aria-hidden="true" /></button>
-        <input
-          type="range"
-          className="wavelength-slider"
-          min={0}
-          max={survey.depth - 1}
-          step={1}
-          value={sliderFrame ?? 0}
-          disabled={disabled}
-          aria-label="SPHEREx wavelength channel"
-          aria-valuetext={sliderFrame === null ? undefined : sliderText(survey, sliderFrame)}
-          onChange={(event) => {
-            const value = Number(event.target.value);
-            commitSlider(value, sliderFrame !== null && value < sliderFrame ? -1 : 1);
-          }}
-        />
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Next (longer) wavelength channel"
-          title="Longer wavelength"
-          disabled={disabled || !next}
-          onClick={() => next && onChange(next.frame)}
-        ><ChevronRight size={15} aria-hidden="true" /></button>
-      </div>
+      <input
+        type="range"
+        className="wavelength-slider"
+        min={0}
+        max={survey.depth - 1}
+        step={1}
+        value={sliderFrame ?? 0}
+        disabled={disabled}
+        aria-label="SPHEREx wavelength channel"
+        aria-valuetext={sliderFrame === null ? undefined : sliderText(survey, sliderFrame)}
+        onChange={(event) => {
+          const value = Number(event.target.value);
+          commitSlider(value, sliderFrame !== null && value < sliderFrame ? -1 : 1);
+        }}
+      />
 
       <p id="wavelength-status" className="wavelength-readout" role="status">
         {current ? (
           <>
             <strong>{formatWavelength(current.wavelengthUm)}</strong>
-            <span>{channelLabel(current)} · frame {current.frame}</span>
+            <span>{channelLabel(current)}</span>
           </>
         ) : 'No channel selected'}
         {loading && <span className="wavelength-loading"><LoaderCircle className="spin" aria-hidden="true" size={12} /> Loading…</span>}
       </p>
-      <p className="field-hint">
-        Wavelength channels of one combined cube — not observation times. Channels 50 and 51 (dichroic boundaries) have no imagery.
-      </p>
+      <p className="field-hint wavelength-note">Combined-cube channels, not observation dates.</p>
     </section>
   );
 }
 
 function optionText(channel: SphereXChannel): string {
-  const base = `${formatWavelength(channel.wavelengthUm)} · ${channelLabel(channel)}`;
+  const base = `Ch ${channel.bandChannel}`;
   return channel.hasData ? base : `${base} — no imagery`;
 }
 

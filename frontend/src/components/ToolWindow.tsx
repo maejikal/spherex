@@ -7,9 +7,11 @@ import type { Placement } from '../state/windows.ts';
 interface ToolWindowProps {
   id: string;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   open: boolean;
   placement: Placement;
+  /** Docked panels and mobile sheets retain content and floating position, but cannot be moved. */
+  movable?: boolean;
   /** For `placement="beside"`: id of the window to sit next to on first open. */
   anchorId?: string;
   /** Stacking value from the app's window order; a pointer-down on the window raises it. */
@@ -31,6 +33,7 @@ export function ToolWindow({
   subtitle,
   open,
   placement,
+  movable = true,
   anchorId,
   zIndex,
   onFocus,
@@ -44,6 +47,11 @@ export function ToolWindow({
   const [keyboardMove, setKeyboardMove] = useState(false);
 
   useLayoutEffect(() => {
+    if (!movable) {
+      pointerDrag.current = null;
+      setKeyboardMove(false);
+      return;
+    }
     if (!open || position) return;
     const workspace = workspaceRef.current;
     const panel = panelRef.current;
@@ -63,10 +71,10 @@ export function ToolWindow({
       anchor,
     });
     setPosition(clampPosition(next, workspace, panel));
-  }, [open, placement, anchorId, position, workspaceRef]);
+  }, [open, movable, placement, anchorId, position, workspaceRef]);
 
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open || !movable) return;
     const workspace = workspaceRef.current;
     const panel = panelRef.current;
     if (!workspace || !panel) return;
@@ -81,7 +89,7 @@ export function ToolWindow({
     observer.observe(workspace);
     observer.observe(panel);
     return () => observer.disconnect();
-  }, [open, workspaceRef]);
+  }, [open, movable, workspaceRef]);
 
   if (!open) return null;
 
@@ -98,21 +106,21 @@ export function ToolWindow({
       ref={panelRef}
       className={`tool-window tool-window--${id}`}
       aria-label={title}
-      style={{
+      style={movable ? {
         left: position ? position.x : placement === 'right-top' ? undefined : 16,
         right: !position && placement === 'right-top' ? 16 : undefined,
         top: position ? position.y : placement === 'left-bottom' ? undefined : 16,
         bottom: !position && placement === 'left-bottom' ? 16 : undefined,
         visibility: 'visible',
         zIndex,
-      }}
+      } : undefined}
       onPointerDownCapture={onFocus}
       onFocusCapture={onFocus}
     >
       <header
         className="tool-window__header"
         onPointerDown={(event) => {
-          if ((event.target as HTMLElement).closest('button')) return;
+          if (!movable || (event.target as HTMLElement).closest('button')) return;
           const node = panelRef.current;
           if (!node || !position) return;
           event.preventDefault();
@@ -149,9 +157,9 @@ export function ToolWindow({
       >
         <div className="tool-window__heading">
           <h2>{title}</h2>
-          <p>{subtitle}</p>
+          {subtitle && <p>{subtitle}</p>}
         </div>
-        <button
+        {movable && <button
           className="button button--quiet button--compact tool-window__move"
           type="button"
           aria-label={`Move ${title} window`}
@@ -181,7 +189,7 @@ export function ToolWindow({
         >
           <Move aria-hidden="true" size={14} />
           <span>{keyboardMove ? 'Moving' : 'Move'}</span>
-        </button>
+        </button>}
         <button className="icon-button" type="button" aria-label={`Close ${title} window`} onClick={onClose}>
           <X aria-hidden="true" size={16} />
         </button>

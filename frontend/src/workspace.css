@@ -1,0 +1,122 @@
+/*
+ * Live layout comparison. Both presentations share one mounted sky renderer and tool tree.
+ * Floating favours uninterrupted imagery; docked reserves space for tools, never sky overlays.
+ * Small screens use a single bottom sheet. No decorative imagery or filters touch survey data.
+ */
+@font-face {
+  font-family: 'Oxanium';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/oxanium/Oxanium-Variable.ttf') format('truetype');
+}
+
+:root {
+  font-family: 'Oxanium', ui-sans-serif, system-ui, sans-serif;
+  --page: #060811;
+  --surface: #101421;
+  --surface-raised: #181e30;
+  --surface-muted: #1d2538;
+  --border: #354055;
+  --border-subtle: #252d40;
+  --text: #f3f5fa;
+  --text-muted: #b2bdd0;
+  --text-dim: #a0adc2;
+  --accent: #86d9f0;
+  --accent-strong: #b6eaf8;
+  --focus: #a998e8;
+  --dock-width: clamp(252px, 23vw, 352px);
+}
+
+.app-shell { grid-template-rows: auto minmax(0, 1fr) 30px; font-variant-numeric: tabular-nums lining-nums; }
+.topbar { min-height: 76px; padding: 12px 24px; background: var(--page); border-color: var(--border-subtle); }
+.brand-block h1 { font-size: 17px; letter-spacing: 0; }
+.brand-block p { color: var(--text-muted); }
+.brand-mark { border: 0; background: transparent; color: var(--text); }
+.survey-badge { border-color: var(--border); background: var(--surface); color: var(--text-muted); }
+.button--primary { background: var(--text); border-color: var(--text); color: var(--page); }
+.button--primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+.toolbar-tool { border-color: transparent; background: transparent; color: var(--text-muted); }
+.toolbar-tool--active { border-color: var(--border); background: var(--surface-raised); color: var(--accent-strong); }
+.toolbar-share { background: var(--text); border-color: var(--text); color: var(--page); }
+.toolbar-share:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+
+.layout-switch { display: flex; align-items: center; gap: 4px; flex-shrink: 0; min-width: 0; margin: 0 12px 0 0; padding: 4px; border: 1px solid var(--border-subtle); border-radius: 8px; }
+.layout-switch__label { padding: 0 8px; color: var(--text-muted); font-size: 11px; }
+.layout-choice { position: relative; display: grid; min-height: 34px; place-items: center; padding: 0 12px; border-radius: 5px; color: var(--text-muted); font-size: 12px; cursor: pointer; }
+.layout-choice input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.layout-choice:hover { background: var(--surface); color: var(--text); }
+.layout-choice--active { background: var(--surface-raised); color: var(--text); }
+.layout-choice:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.tool-window { border-color: var(--border); border-radius: 12px; background: var(--surface); box-shadow: none; }
+.tool-window__header { padding: 12px 14px; background: var(--surface); border-color: var(--border-subtle); }
+.tool-window__heading h2 { font-size: 14px; }
+.tool-window__heading p { color: var(--text-muted); }
+.tool-window__body { scrollbar-color: var(--border) transparent; }
+.app-footer { background: var(--page); border-color: var(--border-subtle); color: var(--text-dim); }
+.viewer-instructions { background: var(--page); color: var(--text-muted); }
+.workspace-announcement { z-index: 9; border-color: var(--border); background: var(--surface); color: var(--text); }
+
+/* Desktop docking changes geometry only; switching never reparents/remounts a tool. */
+@media (min-width: 761px) {
+  .workspace--docked {
+    display: grid;
+    grid-template-columns: 0 minmax(0, 1fr) 0;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+  .workspace--docked[data-left-open="true"] { grid-template-columns: var(--dock-width) minmax(0, 1fr) 0; }
+  .workspace--docked[data-inspect-open="true"] { grid-template-columns: 0 minmax(0, 1fr) var(--dock-width); }
+  .workspace--docked[data-left-open="true"][data-inspect-open="true"] { grid-template-columns: var(--dock-width) minmax(0, 1fr) var(--dock-width); }
+  .workspace--docked > .viewer-frame { position: relative; grid-column: 2; grid-row: 1 / -1; }
+  .workspace--docked > .tool-window { position: relative; width: 100%; height: 100%; max-width: none; max-height: none; min-height: 0; border: 0; border-radius: 0; }
+  .workspace--docked .tool-window__header { flex-shrink: 0; cursor: default; touch-action: auto; }
+  .workspace--docked > .tool-window--find,
+  .workspace--docked > .tool-window--view { grid-column: 1; grid-row: 1 / -1; border-right: 1px solid var(--border-subtle); }
+  .workspace--docked[data-left-stacked="true"] > .tool-window--find { grid-row: 1; }
+  .workspace--docked[data-left-stacked="true"] > .tool-window--view { grid-row: 2; border-top: 1px solid var(--border); }
+  .workspace--docked > .tool-window--inspect { grid-column: 3; grid-row: 1 / -1; border-left: 1px solid var(--border-subtle); }
+}
+
+@media (min-width: 761px) and (max-width: 1180px) {
+  .topbar { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 12px 20px; }
+  .brand-block { grid-column: 1; grid-row: 1; }
+  .survey-badge { grid-column: 3; grid-row: 1; }
+  .layout-switch { grid-column: 2; grid-row: 1; justify-self: center; margin: 0; }
+  .tool-toolbar { grid-column: 1 / 3; grid-row: 2; }
+  .api-status { grid-column: 3; grid-row: 2; justify-self: end; }
+  .topbar__spacer { display: none; }
+}
+
+/* One sheet, independent of the desktop preference. The sky stays reachable above it. */
+@media (max-width: 760px) {
+  .app-shell { height: 100dvh; grid-template-rows: auto minmax(0, 1fr) 28px; }
+  .topbar { min-height: 0; padding: 8px 12px; grid-template-rows: 40px 44px; gap: 8px; }
+  .brand-block h1 { font-size: 15px; }
+  .brand-block p { font-size: 10px; }
+  .brand-mark { width: 24px; }
+  .toolbar-tool, .toolbar-share { min-height: 44px; font-size: 11px; }
+  .api-status { top: 20px; right: 108px; }
+  .workspace--compact { display: flex; flex-direction: column; }
+  .workspace--compact > .viewer-frame { position: relative; flex: 1; min-height: 120px; }
+  .workspace--compact > .tool-window {
+    position: relative;
+    flex-shrink: 0;
+    width: 100%;
+    max-width: none;
+    max-height: 52%;
+    min-height: 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+  }
+  .workspace--compact .tool-window__header { flex-shrink: 0; min-height: 52px; padding: 8px 12px; cursor: default; touch-action: auto; }
+  .workspace--compact .tool-window__heading p { max-width: none; }
+  .workspace--compact .tool-window__header > .icon-button { min-width: 44px; min-height: 44px; }
+  .workspace--compact .tool-window__body { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .workspace--compact .button, .workspace--compact .select-input,
+  .workspace--compact input { min-height: 44px; }
+  .workspace--compact .viewer-instructions { display: none; }
+  .workspace--compact .workspace-announcement { top: 8px; bottom: auto; max-height: 72px; overflow: auto; }
+  .app-footer { font-size: 10px; }
+}

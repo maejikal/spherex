@@ -9,13 +9,10 @@ import {
   ArrowUp,
   Check,
   Copy,
-  Crosshair,
-  Grid2X2,
   Info,
   LoaderCircle,
   RotateCcw,
   Search,
-  Target,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -38,7 +35,6 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
   const [raText, setRaText] = useState('');
   const [decText, setDecText] = useState('');
   const [coordinateError, setCoordinateError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!view) {
@@ -57,24 +53,19 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
     retry: false,
   });
 
-  const resolveMutation = useMutation({ mutationFn: (name: string) => resolveObjectName(name) });
-  const randomMutation = useMutation({ mutationFn: () => getRandomTarget() });
+  const resolveMutation = useMutation({
+    mutationFn: (name: string) => resolveObjectName(name),
+    onSuccess: (object) => onNavigate(object, object.name),
+  });
+  const randomMutation = useMutation({
+    mutationFn: () => getRandomTarget(),
+    onSuccess: (target) => onNavigate(target, target.name),
+  });
 
-  const resolveName = async (event: FormEvent<HTMLFormElement>) => {
+  const resolveName = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const requestedName = objectName.trim();
-    if (!requestedName) {
-      setNotice('Enter an object name to resolve.');
-      return;
-    }
-    setNotice(null);
-    try {
-      const object = await resolveMutation.mutateAsync(requestedName);
-      onNavigate(object, object.name);
-      setNotice(`Resolved ${object.name} from ${object.source ?? 'the name resolver'}.`);
-    } catch {
-      setNotice(null);
-    }
+    if (requestedName) resolveMutation.mutate(requestedName);
   };
 
   const submitCoordinates = (event: FormEvent<HTMLFormElement>) => {
@@ -88,57 +79,45 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
     onNavigate(result.value);
   };
 
-  const selectRandomTarget = async () => {
-    setNotice(null);
-    try {
-      const target = await randomMutation.mutateAsync();
-      onNavigate(target, target.name);
-      setNotice(`Loaded verified sky position${target.name ? ` ${target.name}` : ''}: ${formatCoordinate(target.ra, 4)}°, ${target.dec >= 0 ? '+' : ''}${formatCoordinate(target.dec, 4)}°.`);
-    } catch {
-      setNotice(null);
-    }
-  };
-
   return (
-    <div className="panel-stack">
-      <section className="panel-section" aria-labelledby="find-resolve-heading">
-        <div className="section-heading">
-          <h3 id="find-resolve-heading">Resolve object name</h3>
-          <p>Coordinates come from a live astronomical resolver.</p>
-        </div>
-        <form className="form-stack" onSubmit={resolveName}>
-          <label className="field">
-            <span>Object name</span>
-            <div className="input-with-icon">
-              <Search aria-hidden="true" size={16} />
-              <input
-                type="search"
-                value={objectName}
-                onChange={(event) => setObjectName(event.target.value)}
-                placeholder="e.g. M31"
-                autoComplete="off"
-                aria-describedby="resolver-hint"
-              />
+    <div className="panel-stack find-panel-stack">
+      <section className="panel-section find-name-section" aria-label="Find by object name">
+        <form className="find-name-form" onSubmit={resolveName}>
+          <div className="field find-name-field">
+            <label className="sr-only" htmlFor="find-object-name">Object name</label>
+            <div className="find-name-control">
+              <div className="input-with-icon">
+                <Search aria-hidden="true" size={16} />
+                <input
+                  id="find-object-name"
+                  type="search"
+                  value={objectName}
+                  onChange={(event) => setObjectName(event.target.value)}
+                  placeholder="Object name · e.g. M31"
+                  autoComplete="off"
+                  required
+                />
+              </div>
+              <button className="button button--secondary" type="submit" disabled={resolveMutation.isPending}>
+                {resolveMutation.isPending ? <LoaderCircle className="spin" aria-hidden="true" size={15} /> : null}
+                {resolveMutation.isPending ? 'Finding…' : 'Find'}
+              </button>
             </div>
-            <small id="resolver-hint">No results appear until resolver returns them.</small>
-          </label>
-          <button className="button button--secondary button--full" type="submit" disabled={resolveMutation.isPending}>
-            {resolveMutation.isPending ? <LoaderCircle className="spin" aria-hidden="true" size={15} /> : <Search aria-hidden="true" size={15} />}
-            {resolveMutation.isPending ? 'Resolving…' : 'Resolve name'}
-          </button>
+          </div>
           {resolveMutation.isError && <InlineError message={errorMessage(resolveMutation.error, 'Name resolver failed.')} />}
         </form>
       </section>
 
+      <div className="find-divider" aria-hidden="true">or</div>
+
       <section className="panel-section" aria-labelledby="find-coordinates-heading">
-        <div className="section-heading">
+        <div className="find-section-heading">
           <h3 id="find-coordinates-heading">Go to coordinates</h3>
-          <p>ICRS · decimal degrees · RA wraps at 0°/360°.</p>
         </div>
-        <form className="form-stack" onSubmit={submitCoordinates}>
+        <form className="form-stack find-coordinate-form" onSubmit={submitCoordinates}>
           <div className="coordinate-fields">
             <label className="field">
-              <span>RA (degrees)</span>
+              <span>RA · degrees</span>
               <input
                 type="number"
                 inputMode="decimal"
@@ -147,11 +126,12 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
                 step="any"
                 value={raText}
                 onChange={(event) => setRaText(event.target.value)}
-                placeholder="0 to &lt;360"
+                placeholder="0 to <360"
+                aria-describedby={coordinateError ? 'coordinate-error' : undefined}
               />
             </label>
             <label className="field">
-              <span>Dec (signed degrees)</span>
+              <span>Dec · degrees</span>
               <input
                 type="number"
                 inputMode="decimal"
@@ -161,67 +141,54 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
                 value={decText}
                 onChange={(event) => setDecText(event.target.value)}
                 placeholder="−90 to +90"
+                aria-describedby={coordinateError ? 'coordinate-error' : undefined}
               />
             </label>
           </div>
-          {coordinateError && <InlineError message={coordinateError} />}
-          <button className="button button--primary button--full" type="submit">Load position</button>
+          {coordinateError && <div id="coordinate-error"><InlineError message={coordinateError} /></div>}
+          <button className="button button--primary button--full" type="submit">Go to coordinates</button>
         </form>
       </section>
 
-      <section className="panel-section" aria-labelledby="suggested-heading">
-        <div className="section-heading">
+      <section className="panel-section find-targets" aria-labelledby="suggested-heading">
+        <div className="find-section-heading">
           <h3 id="suggested-heading">Verified destinations</h3>
-          <p>Curated SPHEREx destinations returned by the API.</p>
+          <button
+            className="text-button find-random"
+            type="button"
+            onClick={() => randomMutation.mutate()}
+            disabled={randomMutation.isPending}
+          >
+            {randomMutation.isPending ? 'Finding…' : 'Random'}
+          </button>
         </div>
         {targets.isPending && (
-          <p className="inline-status" role="status"><LoaderCircle className="spin" aria-hidden="true" size={15} /> Checking verified destinations…</p>
+          <p className="inline-status find-target-state" role="status"><LoaderCircle className="spin" aria-hidden="true" size={14} /> Checking destinations…</p>
         )}
         {targets.isError && (
-          <div className="callout callout--error" role="status">
-            <AlertCircle aria-hidden="true" size={17} />
-            <div>
-              <strong>Verified destinations unavailable</strong>
-              <p>{errorMessage(targets.error, 'Could not load coverage-checked targets.')}</p>
-              <button className="text-button" type="button" onClick={() => void targets.refetch()}>Retry</button>
-            </div>
+          <div className="find-target-state--error">
+            <InlineError message={errorMessage(targets.error, 'Could not load verified destinations.')} />
+            <button className="text-button" type="button" onClick={() => void targets.refetch()}>Retry</button>
           </div>
         )}
         {targets.isSuccess && targets.data.length === 0 && (
-          <div className="callout">
-            <Info aria-hidden="true" size={17} />
-            <div><strong>No verified suggestions loaded</strong><p>The API returned no curated SPHEREx destinations.</p></div>
-          </div>
+          <p className="empty-inline find-target-state">No verified destinations available.</p>
         )}
         {targets.isSuccess && targets.data.length > 0 && (
           <ul className="target-list" aria-label="Verified destinations">
             {targets.data.map((target) => (
               <li key={target.id ?? `${target.name}-${target.ra}-${target.dec}`}>
-                <button type="button" className="target-row" onClick={() => onNavigate(target, target.name)}>
-                  <span className="target-row__icon"><Target aria-hidden="true" size={15} /></span>
-                  <span className="target-row__copy">
-                    <strong>{target.name}</strong>
-                    <small>{formatCoordinate(target.ra, 3)}°, {formatCoordinate(target.dec, 3)}°</small>
-                    {target.description && <small>{target.description}</small>}
-                  </span>
-                  <ArrowRight aria-hidden="true" size={15} />
+                <button type="button" className="target-row target-row--compact" onClick={() => onNavigate(target, target.name)}>
+                  <span className="target-row__name">{target.name}</span>
+                  <span className="target-row__coordinates">{formatCoordinate(target.ra, 3)}°, {formatCoordinate(target.dec, 3)}°</span>
+                  <ArrowRight aria-hidden="true" size={14} />
                 </button>
               </li>
             ))}
           </ul>
         )}
-        <button
-          className="button button--secondary button--full"
-          type="button"
-          onClick={() => void selectRandomTarget()}
-          disabled={randomMutation.isPending}
-        >
-          {randomMutation.isPending ? <LoaderCircle className="spin" aria-hidden="true" size={15} /> : <Target aria-hidden="true" size={15} />}
-          {randomMutation.isPending ? 'Choosing position…' : 'Random sky position'}
-        </button>
         {randomMutation.isError && <InlineError message={errorMessage(randomMutation.error, 'No verified covered position was returned.')} />}
       </section>
-      {notice && <p className="inline-status" role="status"><Check aria-hidden="true" size={15} /> {notice}</p>}
     </div>
   );
 }
@@ -266,7 +233,8 @@ export function ViewPanel({
   const fieldOfView = view ? calculateFieldOfView(view.scale, width, height) : null;
 
   return (
-    <div className="panel-stack">
+    <div className="panel-stack view-panel-stack">
+      {!view && <p className="view-empty-state"><Info aria-hidden="true" size={14} />Load a position to enable wavelength, zoom, pan, and grid controls.</p>}
       <WavelengthSelector
         survey={survey}
         surveyPending={surveyPending}
@@ -278,9 +246,9 @@ export function ViewPanel({
       />
 
       <section className="panel-section" aria-labelledby="navigate-image-heading">
-        <div className="section-heading">
+        <div className="section-heading view-section-heading">
           <h3 id="navigate-image-heading">Navigate image</h3>
-          <p>Smaller arcseconds per pixel means greater zoom.</p>
+          <p>Smaller scale means more zoom.</p>
         </div>
         <div className="button-row">
           <button className="button button--secondary" type="button" disabled={!view} onClick={() => onZoom('out')}>
@@ -293,34 +261,33 @@ export function ViewPanel({
             <RotateCcw aria-hidden="true" size={15} /> Reset
           </button>
         </div>
-        <div className="compass-row" aria-label="Pan controls">
+        <div className="compass-row" role="group" aria-label="Pan the sky">
           <button type="button" className="icon-button compass compass--north" aria-label="Pan sky north" title="Pan sky north" disabled={!view} onClick={() => onPan('north')}><ArrowUp size={15} aria-hidden="true" /></button>
           <button type="button" className="icon-button compass compass--west" aria-label="Pan sky west" title="Pan sky west" disabled={!view} onClick={() => onPan('west')}><ArrowLeft size={15} aria-hidden="true" /></button>
           <span className="compass__center" aria-hidden="true">N</span>
           <button type="button" className="icon-button compass compass--east" aria-label="Pan sky east" title="Pan sky east" disabled={!view} onClick={() => onPan('east')}><ArrowRight size={15} aria-hidden="true" /></button>
           <button type="button" className="icon-button compass compass--south" aria-label="Pan sky south" title="Pan sky south" disabled={!view} onClick={() => onPan('south')}><ArrowDown size={15} aria-hidden="true" /></button>
-          <span className="fov-readout">{fieldOfView ? formatFieldOfView(fieldOfView.widthArcminutes, fieldOfView.heightArcminutes) : 'FOV unavailable'}</span>
+          <span className="fov-readout">
+            <span>Field of view</span>
+            <strong>{fieldOfView ? formatFieldOfView(fieldOfView.widthArcminutes, fieldOfView.heightArcminutes) : 'Unavailable'}</strong>
+          </span>
         </div>
-        {view && <p className="field-hint">Field of view · scale {view.scale.toFixed(2)} arcsec/pixel</p>}
+        {view && <p className="field-hint view-scale">Scale · {view.scale.toFixed(2)} arcsec/pixel</p>}
       </section>
 
       <section className="panel-section" aria-labelledby="overlays-heading">
-        <div className="section-heading">
+        <div className="section-heading view-section-heading">
           <h3 id="overlays-heading">Overlays</h3>
-          <p>Coordinate grid is drawn by Aladin Lite; crosshair is local.</p>
         </div>
         <label className="toggle-row">
-          <span className="toggle-row__icon"><Grid2X2 aria-hidden="true" size={16} /></span>
-          <span><strong>Coordinate grid</strong><small>Celestial grid that moves with the sky</small></span>
+          <span><strong>Coordinate grid</strong></span>
           <input type="checkbox" checked={view?.grid ?? false} disabled={!view} onChange={(event) => onGridChange(event.target.checked)} />
         </label>
         <label className="toggle-row">
-          <span className="toggle-row__icon"><Crosshair aria-hidden="true" size={16} /></span>
-          <span><strong>Center crosshair</strong><small>Local visual reference only</small></span>
+          <span><strong>Center crosshair</strong></span>
           <input type="checkbox" checked={crosshair} onChange={(event) => onCrosshairChange(event.target.checked)} />
         </label>
       </section>
-      {!view && <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>Load a sky position first</strong><p>Zoom, pan, and grid options activate after coordinates are set.</p></div></div>}
     </div>
   );
 }
@@ -330,14 +297,15 @@ interface InspectPanelProps {
   view: ExplorerView | null;
   survey: SphereXSurveyInfo | undefined;
   loading: boolean;
+  analysisEnabled: boolean;
 }
 
-export function InspectPanel({ selection, view, survey, loading }: InspectPanelProps) {
+export function InspectPanel({ selection, view, survey, loading, analysisEnabled }: InspectPanelProps) {
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const nearby = useQuery({
     queryKey: ['objects', 'nearby', selection?.ra, selection?.dec],
     queryFn: ({ signal }) => findNearbyObjects(selection as SkyCoordinates, signal),
-    enabled: Boolean(selection),
+    enabled: Boolean(selection && analysisEnabled),
     staleTime: 60 * 1000,
     retry: false,
   });
@@ -360,8 +328,7 @@ export function InspectPanel({ selection, view, survey, loading }: InspectPanelP
     <div className="panel-stack">
       <section className="panel-section" aria-labelledby="selection-heading">
         <div className="section-heading">
-          <h3 id="selection-heading">Clicked position</h3>
-          <p>Sky position under the pointer, from Aladin Lite's HiPS projection.</p>
+          <h3 id="selection-heading">Selected position</h3>
         </div>
         {selection ? (
           <div className="coordinate-readout">
@@ -370,27 +337,28 @@ export function InspectPanel({ selection, view, survey, loading }: InspectPanelP
             <span className="status-badge">Selected</span>
           </div>
         ) : (
-          <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>No point selected</strong><p>Click the sky to inspect a position.</p></div></div>
+          <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>No point selected</strong><p>Single-click to select; double-click to center the position.</p></div></div>
         )}
       </section>
 
-      <section className="panel-section" aria-labelledby="catalogue-heading">
+      <section className="panel-section catalogue-results" aria-labelledby="catalogue-heading">
         <div className="section-heading">
-          <h3 id="catalogue-heading">Catalogue matches</h3>
-          <p>SIMBAD objects near the position. These are not SPHEREx detections.</p>
+          <h3 id="catalogue-heading">Catalogue matches{selection && analysisEnabled && nearby.isSuccess && <span className="catalogue-results__count" aria-label={`${nearby.data.length} catalogue matches`}>{nearby.data.length}</span>}</h3>
+          <p>SIMBAD associations, not SPHEREx detections.</p>
         </div>
         {!selection && <p className="empty-inline">Select a sky position to query SIMBAD.</p>}
-        {selection && nearby.isPending && <p className="inline-status" role="status"><LoaderCircle className="spin" aria-hidden="true" size={15} /> Searching SIMBAD…</p>}
-        {selection && nearby.isError && <InlineError message={errorMessage(nearby.error, 'Catalogue lookup failed.')} />}
-        {selection && nearby.isSuccess && nearby.data.length === 0 && (
+        {selection && !analysisEnabled && <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>Area ready to analyze</strong><p>Choose Analyze area on the viewer to search nearby SIMBAD objects; double-click sky to center the selection.</p></div></div>}
+        {selection && analysisEnabled && nearby.isPending && <p className="inline-status" role="status"><LoaderCircle className="spin" aria-hidden="true" size={15} /> Searching SIMBAD…</p>}
+        {selection && analysisEnabled && nearby.isError && <InlineError message={errorMessage(nearby.error, 'Catalogue lookup failed.')} />}
+        {selection && analysisEnabled && nearby.isSuccess && nearby.data.length === 0 && (
           <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>No catalogue matches returned</strong><p>SIMBAD has no objects within 30 arcseconds.</p></div></div>
         )}
-        {selection && nearby.isSuccess && nearby.data.length > 0 && (
+        {selection && analysisEnabled && nearby.isSuccess && nearby.data.length > 0 && (
           <ul className="match-list">
             {nearby.data.map((object, index) => <MatchRow key={object.id ?? `${object.name ?? 'match'}-${object.ra}-${object.dec}-${index}`} object={object} />)}
           </ul>
         )}
-        {selection && (
+        {selection && analysisEnabled && (
           <button className="button button--secondary button--full" type="button" onClick={() => void nearby.refetch()} disabled={nearby.isFetching}>
             {nearby.isFetching ? <LoaderCircle className="spin" aria-hidden="true" size={15} /> : <Search aria-hidden="true" size={15} />}
             Retry catalogue lookup
@@ -401,7 +369,6 @@ export function InspectPanel({ selection, view, survey, loading }: InspectPanelP
       <section className="panel-section" aria-labelledby="provenance-heading">
         <div className="section-heading">
           <h3 id="provenance-heading">Image provenance</h3>
-          <p>Values come from the HiPS dataset description; unavailable values stay explicit.</p>
         </div>
         <dl className="provenance-list">
           <ProvenanceRow label="Survey / release" value={survey ? `${survey.collection} · ${survey.title}` : 'Unavailable'} />
@@ -417,7 +384,7 @@ export function InspectPanel({ selection, view, survey, loading }: InspectPanelP
         </dl>
         <button className="button button--secondary button--full" type="button" disabled={!selection} onClick={() => void copyCoordinates()}>
           {copyMessage?.includes('copied') ? <Check aria-hidden="true" size={15} /> : <Copy aria-hidden="true" size={15} />}
-          Copy clicked coordinates
+          Copy selected coordinates
         </button>
         {copyMessage && <p className="field-hint" role="status">{copyMessage}</p>}
       </section>
@@ -431,7 +398,7 @@ function MatchRow({ object }: { object: CatalogObject }) {
       <strong>{object.name ?? object.id ?? 'Catalogue object'}</strong>
       {object.objectType && <span>{object.objectType}</span>}
       <small>Object position · {formatCoordinate(object.ra, 5)}°, {object.dec >= 0 ? '+' : ''}{formatCoordinate(object.dec, 5)}°</small>
-      {object.separationArcsec !== undefined && <small>Separation · {object.separationArcsec.toFixed(2)}″</small>}
+      {object.separationArcsec !== undefined && <small className="match-row__separation"><span>Separation</span><strong>{object.separationArcsec.toFixed(2)}″</strong></small>}
       {object.source && <small>Source · {object.source}</small>}
     </li>
   );

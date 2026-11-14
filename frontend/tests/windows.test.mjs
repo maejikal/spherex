@@ -48,3 +48,16 @@ test('without an anchor (Find closed) View opens at the top-left; other placemen
   assert.deepEqual(initialPosition({ placement: 'right-top', workspace, panel: { width: 360, height: 500 } }), { x: 1440 - 360 - 16, y: 16 });
   assert.deepEqual(initialPosition({ placement: 'left-bottom', workspace, panel: { width: 360, height: 500 } }), { x: 16, y: 772 - 500 - 16 });
 });
+
+
+test('compact navigation opens one tool at a time without changing desktop toggles', () => {
+  const panels = { find: true, view: false, inspect: true };
+  assert.deepEqual(togglePanel(panels, 'view', true), { find: false, view: true, inspect: false });
+  assert.deepEqual(togglePanel(panels, 'view'), { find: true, view: true, inspect: true });
+  assert.deepEqual(panels, { find: true, view: false, inspect: true });
+});
+
+test('closing a compact tool does not reopen another tool', () => {
+  const panels = { find: false, view: true, inspect: false };
+  assert.deepEqual(togglePanel(panels, 'view', true), { find: false, view: false, inspect: false });
+});
