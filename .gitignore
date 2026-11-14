@@ -3,6 +3,25 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+.codex/
+
+# Local operating-system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Frontend dependencies and generated tooling output
+node_modules/
+.vite/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# Local environment overrides (keep .env.example files tracked)
+.env.local
+.env.*.local
+
 # C extensions
 *.so
 
