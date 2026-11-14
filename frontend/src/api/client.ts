@@ -1,11 +1,4 @@
-import type {
-  ApiHealth,
-  CatalogObject,
-  CutoutRequest,
-  CutoutResponse,
-  ResolvedObject,
-  SkyTarget,
-} from './types.ts';
+import type { ApiHealth, CatalogObject, ResolvedObject, SkyTarget } from './types.ts';
 import type { SkyCoordinates } from '../sky/coordinates.ts';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -68,66 +61,6 @@ export async function getApiHealth(signal?: AbortSignal): Promise<ApiHealth> {
     throw new ApiError('API health response did not include a status.');
   }
   return { status: value.status };
-}
-
-export async function fetchCutout(request: CutoutRequest, signal: AbortSignal): Promise<CutoutResponse> {
-  const url = makeUrl('/api/images/cutout');
-  url.searchParams.set('ra', String(request.ra));
-  url.searchParams.set('dec', String(request.dec));
-  url.searchParams.set('scale', String(request.scale));
-  url.searchParams.set('width', String(request.width));
-  url.searchParams.set('height', String(request.height));
-  url.searchParams.set('survey', request.survey);
-  url.searchParams.set('grid', request.grid ? '1' : '0');
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      signal,
-      headers: { Accept: 'image/jpeg' },
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    throw new ApiError('Could not reach the Sky Explorer API. Start the FastAPI service and retry.');
-  }
-
-  if (!response.ok) throw await readError(response);
-  const contentType = ((response.headers.get('content-type') ?? '').split(';')[0] ?? '').trim().toLowerCase();
-  if (contentType !== 'image/jpeg') {
-    throw new ApiError('Image API did not return a JPEG cutout.', {
-      code: 'invalid_content_type',
-      status: response.status,
-    });
-  }
-
-  const blob = await response.blob();
-  if (blob.size < 4) {
-    throw new ApiError('Image API returned an empty or invalid cutout.', {
-      code: 'invalid_image',
-      status: response.status,
-    });
-  }
-
-  const header = new Uint8Array(await blob.slice(0, 3).arrayBuffer());
-  if (header[0]! !== 0xff || header[1]! !== 0xd8 || header[2]! !== 0xff) {
-    throw new ApiError('Image API response was not a valid JPEG file.', {
-      code: 'invalid_image',
-      status: response.status,
-    });
-  }
-
-  return {
-    blob,
-    contentType,
-    metadata: {
-      sourceUrl: safeUrlHeader(response.headers, 'X-Source-URL'),
-      projection: nonEmptyHeader(response.headers, 'X-Projection'),
-      coordinateFrame: nonEmptyHeader(response.headers, 'X-Coordinate-Frame'),
-      observationTime: nonEmptyHeader(response.headers, 'X-Observation-Time'),
-      wavelength: nonEmptyHeader(response.headers, 'X-Wavelength'),
-      surveyRelease: nonEmptyHeader(response.headers, 'X-Survey-Release'),
-    },
-  };
 }
 
 export async function listSuggestedTargets(signal?: AbortSignal): Promise<SkyTarget[]> {
@@ -233,22 +166,6 @@ function parseCoordinates(value: unknown): SkyCoordinates | null {
 
 function firstString(...values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim();
-}
-
-function nonEmptyHeader(headers: Headers, name: string): string | null {
-  const value = headers.get(name)?.trim();
-  return value ? value : null;
-}
-
-function safeUrlHeader(headers: Headers, name: string): string | null {
-  const value = nonEmptyHeader(headers, name);
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

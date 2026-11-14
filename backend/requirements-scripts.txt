@@ -1,0 +1,3 @@
+# Only needed for scripts/verify_targets.py (not by the API server).
+pillow>=10.3
+astropy-healpix>=1.0

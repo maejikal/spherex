@@ -1,3 +1,8 @@
+> **Status (2026-11-14): superseded in part.** This is the original SDSS-Navigate-style specification. SDSS was only ever the
+> *interface* reference; the imagery source is now the **NASA SPHEREx all-sky HiPS cube** rendered by Aladin Lite, with a wavelength
+> selector. The layout, floating windows, search, Inspect panel and quality bar described below still apply; every SDSS data
+> requirement (JPEG cutouts, SkyServer queries, SDSS coverage) no longer does. See `README.md`, `backend/README.md` and `frontend/README.md`.
+
 # **PROJECT: NASA Space Apps — Interactive Astronomical Sky Explorer**
 
 ## **Your role**

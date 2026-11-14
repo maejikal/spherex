@@ -4,9 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Activity, Compass, Eye, Search, Share2, SlidersHorizontal, Telescope } from 'lucide-react';
 import { getApiHealth } from './api/client.ts';
 import type { ExplorerView } from './api/types.ts';
-import { InspectPanel, FindPanel, ViewPanel, type LoadedCutoutInfo } from './components/Panels.tsx';
+import { AladinSkyViewer, type ViewerStatus } from './components/AladinSkyViewer.tsx';
+import { InspectPanel, FindPanel, ViewPanel } from './components/Panels.tsx';
 import { ToolWindow } from './components/ToolWindow.tsx';
-import { ViewerCanvas } from './components/ViewerCanvas.tsx';
 import {
   DEFAULT_SCALE_ARCSEC_PER_PIXEL,
   formatCoordinate,
@@ -14,6 +14,9 @@ import {
   zoomScale,
 } from './sky/coordinates.ts';
 import type { SkyCoordinates } from './sky/coordinates.ts';
+import { defaultFrame } from './sky/spherex/channels.ts';
+import { SPHEREX_HIPS_URL, SPHEREX_SURVEY_ID } from './sky/spherex/config.ts';
+import { fetchSurveyInfo } from './sky/spherex/properties.ts';
 import { parseViewSearch, serializeViewSearch } from './state/urlView.ts';
 import { useExplorerStore } from './state/explorerStore.ts';
 
@@ -34,7 +37,7 @@ export default function App() {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [homeView, setHomeView] = useState<ExplorerView | null>(null);
   const [dimensions, setDimensions] = useState({ width: 1024, height: 768 });
-  const [cutoutInfo, setCutoutInfo] = useState<LoadedCutoutInfo | null>(null);
+  const [viewerStatus, setViewerStatus] = useState<ViewerStatus>({ loading: false, tileError: null });
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [shareFallback, setShareFallback] = useState<string | null>(null);
   const [panels, setPanels] = useState<PanelVisibility>(() => {
@@ -48,6 +51,14 @@ export default function App() {
     staleTime: 30_000,
     refetchInterval: 30_000,
     retry: false,
+  });
+
+  // Dataset description verified against NASA/IPAC IRSA; supplies the real wavelength table.
+  const survey = useQuery({
+    queryKey: ['spherex', 'hips-properties'],
+    queryFn: ({ signal }) => fetchSurveyInfo(SPHEREX_HIPS_URL, signal),
+    staleTime: 60 * 60 * 1000,
+    retry: 1,
   });
 
   useEffect(() => {
@@ -84,16 +95,17 @@ export default function App() {
     setDimensions((current) => current.width === next.width && current.height === next.height ? current : next);
   }, []);
 
-  const updateCutoutInfo = useCallback((next: LoadedCutoutInfo | null) => {
-    setCutoutInfo((current) => sameCutoutInfo(current, next) ? current : next);
+  const updateViewerStatus = useCallback((next: ViewerStatus) => {
+    setViewerStatus((current) => (current.loading === next.loading && current.tileError === next.tileError ? current : next));
   }, []);
 
   const navigateTo = useCallback((coordinates: SkyCoordinates, label?: string) => {
     const nextView: ExplorerView = {
       ...coordinates,
       scale: DEFAULT_SCALE_ARCSEC_PER_PIXEL,
-      survey: 'sdss-dr18',
+      survey: SPHEREX_SURVEY_ID,
       grid: useExplorerStore.getState().view?.grid ?? false,
+      channel: useExplorerStore.getState().view?.channel ?? null,
     };
     setView(nextView, 'push');
     setHomeView(nextView);
@@ -104,13 +116,28 @@ export default function App() {
     setShareFallback(null);
   }, [setSelection, setView]);
 
+  // Pan/zoom made inside Aladin by the user. `replace` keeps continuous panning from flooding history.
+  const applyViewerView = useCallback((next: { ra: number; dec: number; scale: number }) => {
+    const current = useExplorerStore.getState().view;
+    if (!current) return;
+    setView({ ...current, ...next }, 'replace');
+  }, [setView]);
+
+  const changeChannel = useCallback((frame: number) => {
+    const current = useExplorerStore.getState().view;
+    if (!current) return;
+    const info = survey.data;
+    const channel = info ? info.wavelengthsUm[frame] : undefined;
+    setView({ ...current, channel: frame }, 'push');
+    if (channel !== undefined) setAnnouncement(`Wavelength ${channel.toFixed(3)} micrometres (channel ${frame}).`);
+  }, [setView, survey.data]);
+
   const panByDrag = useCallback((dragX: number, dragY: number) => {
     const current = useExplorerStore.getState().view;
     if (!current) return;
     const center = panCenterByDrag(current, current.scale, dragX, dragY);
     const next = { ...current, ...center };
     setView(next, 'push');
-    setSelection(null);
     setAnnouncement(`View centered at RA ${formatCoordinate(next.ra, 4)}°, Dec ${formatCoordinate(next.dec, 4)}°.`);
   }, [setSelection, setView]);
 
@@ -144,8 +171,8 @@ export default function App() {
   }, [homeView, setSelection, setView]);
 
   const selectPosition = useCallback((coordinates: SkyCoordinates) => {
-    setSelection({ ...coordinates, accuracy: 'approximate' });
-    setAnnouncement(`Approximate clicked position: RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°.`);
+    setSelection({ ...coordinates, accuracy: 'projection' });
+    setAnnouncement(`Selected position: RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°.`);
     setPanels((current) => ({ ...current, inspect: true }));
   }, [setSelection]);
 
@@ -181,7 +208,7 @@ export default function App() {
             <p>Interactive sky viewer</p>
           </div>
         </div>
-        <span className="survey-badge">SDSS DR18</span>
+        <span className="survey-badge">SPHEREx DR1</span>
         <div className="topbar__spacer" />
         <div className="tool-toolbar" role="group" aria-label="Explorer tools">
           <ToolbarButton id="find" label="Find" active={panels.find} onClick={() => togglePanel('find')}><Search size={16} aria-hidden="true" /></ToolbarButton>
@@ -205,14 +232,19 @@ export default function App() {
       </header>
 
       <main className="workspace" ref={workspaceRef} aria-label="Interactive sky explorer workspace">
-        <ViewerCanvas
+        <AladinSkyViewer
           view={view}
+          survey={survey.data}
+          surveyPending={survey.isPending}
+          surveyError={survey.error}
+          onRetrySurvey={() => void survey.refetch()}
+          selection={selection}
           crosshair={crosshair}
           onDimensions={updateDimensions}
-          onCutoutChange={updateCutoutInfo}
+          onUserView={applyViewerView}
           onSelect={selectPosition}
-          onPanByDrag={panByDrag}
-          onZoom={zoom}
+          onKeyPan={panDirection}
+          onStatus={updateViewerStatus}
         />
 
         <ToolWindow
@@ -230,7 +262,7 @@ export default function App() {
         <ToolWindow
           id="view"
           title="View controls"
-          subtitle="Pan · zoom · source-supported overlays"
+          subtitle="Wavelength · zoom · overlays"
           open={panels.view}
           placement="left-bottom"
           workspaceRef={workspaceRef}
@@ -241,6 +273,12 @@ export default function App() {
             width={dimensions.width}
             height={dimensions.height}
             crosshair={crosshair}
+            survey={survey.data}
+            surveyPending={survey.isPending}
+            surveyError={survey.error}
+            frame={view && survey.data ? (view.channel ?? defaultFrame(survey.data)) : null}
+            loading={viewerStatus.loading}
+            onChannelChange={changeChannel}
             canReset={Boolean(homeView && view)}
             onZoom={zoom}
             onPan={panDirection}
@@ -259,15 +297,15 @@ export default function App() {
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, inspect: false }))}
         >
-          <InspectPanel selection={selection} cutout={cutoutInfo} />
+          <InspectPanel selection={selection} view={view} survey={survey.data} loading={viewerStatus.loading} />
         </ToolWindow>
 
         {announcement && <p className="workspace-announcement" role="status" aria-live="polite">{announcement}</p>}
       </main>
       <footer className="app-footer">
         <span><Compass aria-hidden="true" size={13} /> ICRS / equatorial coordinates</span>
-        <span>SDSS JPEG cutout geometry approximate · no WCS claim</span>
-        <span className="app-footer__future">SPHEREx data integration planned separately</span>
+        <span>SPHEREx DR1 all-sky cube · NASA/IPAC IRSA HiPS · rendered with Aladin Lite (CDS)</span>
+        <span className="app-footer__future">Wavelength channels of a combined cube, not observation times</span>
       </footer>
     </div>
   );
@@ -298,15 +336,4 @@ function ToolbarButton({
       {children}<span>{label}</span>
     </button>
   );
-}
-
-function sameCutoutInfo(left: LoadedCutoutInfo | null, right: LoadedCutoutInfo | null): boolean {
-  if (left === right) return true;
-  if (!left || !right) return false;
-  const metadataMatches = Object.keys(left.metadata).every((key) =>
-    left.metadata[key as keyof typeof left.metadata] === right.metadata[key as keyof typeof right.metadata]);
-  return left.width === right.width && left.height === right.height &&
-    left.requestedWidth === right.requestedWidth && left.requestedHeight === right.requestedHeight && metadataMatches &&
-    left.scale === right.scale && left.survey === right.survey &&
-    left.center.ra === right.center.ra && left.center.dec === right.center.dec;
 }

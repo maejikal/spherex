@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends
 
 from ..models.errors import AppError
 from ..models.responses import DependencyHealth, DependencyStatus, HealthResponse
-from ..providers.base import CutoutRequest
 from .deps import Services, get_services
 
 router = APIRouter(tags=["health"])
@@ -14,7 +13,7 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    """Liveness of this service only. Deliberately independent of SDSS/CDS availability."""
+    """Liveness of this service only. Deliberately independent of IRSA/CDS/SIMBAD availability."""
     return HealthResponse(status="ok")
 
 
@@ -30,7 +29,8 @@ async def dependency_health(services: Services = Depends(get_services)) -> Depen
             return DependencyStatus(name=name, ok=False, detail=f"{exc.code}: {exc.message}")
 
     results = await asyncio.gather(
-        probe("sdss-cutout", services.sdss.get_cutout(CutoutRequest(ra=180.0, dec=0.5, scale=0.4, width=64, height=64))),
+        probe("irsa-spherex-hips", services.spherex.describe()),
         probe("cds-sesame", services.sesame.resolve("M31")),
+        probe("simbad", services.catalogue.nearby(10.6847083, 41.26875, 5.0, 1)),
     )
     return DependencyHealth(status="ok" if all(r.ok for r in results) else "degraded", dependencies=list(results))

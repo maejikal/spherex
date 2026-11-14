@@ -772,3 +772,49 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ---- SPHEREx / Aladin Lite viewer -------------------------------------------------------- */
+.sky-viewer__surface--aladin { background: #292d35; }
+.sky-viewer__surface .aladin-host,
+.sky-viewer__surface .aladin-host.aladin-container { position: absolute; inset: 0; width: 100%; height: 100%; background: #292d35; }
+/* Aladin's own chrome is replaced by this app's controls; the CDS credit lives in the viewer footer. */
+.aladin-host .aladin-logo-container,
+.aladin-host .aladin-logo,
+.aladin-host .aladin-location,
+.aladin-host .aladin-fov,
+.aladin-host .aladin-stack-control,
+.aladin-host .aladin-box,
+.aladin-host .aladin-statusBar,
+.aladin-host .aladin-reticle { display: none !important; }
+
+.select-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid #304255;
+  border-radius: 5px;
+  outline: none;
+  background: #091421;
+  color: #e6edf3;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.select-input:focus { border-color: #6fb8c4; box-shadow: 0 0 0 2px #4b879022; }
+.select-input option:disabled { color: #6b7d8e; }
+
+.wavelength-stepper { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+.wavelength-slider { width: 100%; accent-color: var(--accent); }
+.wavelength-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0;
+  color: #c2d0db;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.wavelength-readout strong { color: var(--accent-strong); font-size: 13px; }
+.wavelength-readout span { color: #8498a9; }
+.wavelength-loading { display: inline-flex; align-items: center; gap: 4px; color: var(--accent) !important; }

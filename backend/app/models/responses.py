@@ -20,12 +20,31 @@ class DependencyHealth(BaseModel):
     dependencies: list[DependencyStatus]
 
 
+class ChannelOut(BaseModel):
+    frame: int = Field(description="0-based cube frame; equals the HiPS tile-file suffix and the frontend `channel` URL parameter")
+    band: int
+    band_channel: int
+    wavelength_um: float
+    has_data: bool
+
+
 class SurveyOut(BaseModel):
     id: str
     name: str
     release: str
     available: bool
     description: str
+    data_source: str
+    hips_url: str | None = None
+    tile_format: str | None = None
+    tile_width: int | None = None
+    max_order: int | None = None
+    coordinate_frame: str | None = None
+    sky_fraction: float | None = None
+    observation_window_mjd: tuple[float, float] | None = Field(
+        default=None, description="Span of the combined cube; it is not the time of any single exposure"
+    )
+    channels: list[ChannelOut] = []
 
 
 class SurveysResponse(BaseModel):

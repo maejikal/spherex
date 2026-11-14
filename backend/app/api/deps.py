@@ -5,10 +5,9 @@ from dataclasses import dataclass
 import httpx
 from fastapi import Request
 
-from ..providers.sdss import SDSSImageProvider
+from ..providers.spherex import SphereXHiPSProvider
 from ..providers.sesame import SesameResolver
 from ..services.catalogue_search import CatalogueSearchService
-from ..services.image_service import ImageService
 from ..services.object_resolver import ObjectResolverService
 from ..services.target_service import TargetService
 
@@ -16,8 +15,7 @@ from ..services.target_service import TargetService
 @dataclass
 class Services:
     http: httpx.AsyncClient
-    images: ImageService
-    sdss: SDSSImageProvider
+    spherex: SphereXHiPSProvider
     sesame: SesameResolver
     resolver: ObjectResolverService
     catalogue: CatalogueSearchService

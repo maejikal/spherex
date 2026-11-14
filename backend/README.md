@@ -1,25 +1,19 @@
 # Sky Explorer backend
 
-FastAPI service for the Sky Explorer frontend. It serves **real SDSS DR18 imagery and catalogue data** and
-resolves object names through **CDS Sesame**. Nothing astronomical is generated or guessed: if an upstream
-cannot answer, the API returns a structured error.
+FastAPI service for scientific data that is not rendered in the browser. **Sky imagery is not served here**: Aladin Lite reads the NASA/IPAC SPHEREx HiPS
+tiles directly from IRSA. The backend provides SPHEREx survey metadata, CDS Sesame name resolution, SIMBAD nearby-object lookup and tile-verified SPHEREx
+targets. Nothing astronomical is generated or guessed; if an upstream cannot answer, the API returns a structured error.
 
 ## Run
 
 ```zsh
 # from the repository root
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements.txt
-
 cd backend
 ../.venv/bin/uvicorn app.main:app --reload          # http://127.0.0.1:8000  (docs: /docs)
-
-# second terminal
-cd frontend && npm install && npm run dev            # http://localhost:5173 (proxies /api -> :8000)
+../.venv/bin/python -m pytest                        # mocked, no network needed
 ```
-
-Tests (no network needed; all upstreams are mocked): `cd backend && ../.venv/bin/python -m pytest`
 
 Configuration is via `SKY_*` environment variables or `backend/.env` (see `.env.example`).
 
@@ -27,71 +21,52 @@ Configuration is via `SKY_*` environment variables or `backend/.env` (see `.env.
 
 | Route | Notes |
 | --- | --- |
-| `GET /api/health` | `{"status":"ok"}`. Independent of SDSS/CDS. |
-| `GET /api/health/dependencies` | Diagnostic live probe of SDSS and Sesame (not used by the frontend). |
-| `GET /api/surveys` | Only `sdss-dr18`. SPHEREx is not listed until implemented. |
-| `GET /api/images/cutout` | `ra, dec` required; `scale=0.4, width=512, height=512, survey=sdss-dr18, grid=0` optional. Returns raw `image/jpeg`. |
+| `GET /api/health` | `{"status":"ok"}`. Independent of IRSA/CDS/SIMBAD. |
+| `GET /api/health/dependencies` | Diagnostic live probe of IRSA HiPS, Sesame and SIMBAD. |
+| `GET /api/surveys` | Verified SPHEREx description read from the HiPS `properties`: release, tile format/order, observation window, and all 102 channels (`frame`, `band`, `band_channel`, `wavelength_um`, `has_data`). 502 if IRSA is unreachable or the metadata is not the SPHEREx cube. |
 | `GET /api/objects/resolve?name=` | CDS Sesame (SIMBAD/NED/VizieR). |
-| `GET /api/objects/nearby` | `ra, dec, radius_arcsec=30 (max 120), limit=8 (max 50)`. SDSS SkyServer SQL, built server-side. |
-| `GET /api/targets/suggested` | Curated, coverage-verified targets. |
-| `GET /api/targets/random` | Random verified field; never the same one twice in a row. |
+| `GET /api/objects/nearby` | SIMBAD cone search. `ra, dec, radius_arcsec=30 (max 120), limit=8 (max 50)`. |
+| `GET /api/targets/suggested` | Barnard's Star, Epsilon Indi B, WISE 0855-0714, RW Aurigae, R Draconis, M31, M42. |
+| `GET /api/targets/random` | One of 40 tile-verified positions drawn uniformly on the sphere; never the same twice in a row. |
 
-Errors always look like `{"error": {"code", "message"}}`: `invalid_parameters` (422), `unsupported_survey` (400),
-`no_coverage` (404), `object_not_found` (404), `upstream_timeout` (504), `upstream_unavailable` /
-`upstream_invalid_response` / `catalogue_unavailable` (502), `internal_error` (500).
+Errors always use `{"error": {"code", "message"}}`: `invalid_parameters` (422), `unsupported_survey` (400), `object_not_found` (404), `upstream_timeout` (504),
+`upstream_unavailable` / `upstream_invalid_response` / `catalogue_unavailable` (502), `internal_error` (500), `not_found` (404).
 
-Cutout response headers (only when truly known): `X-Source-URL`, `X-Coordinate-Frame` (`J2000`),
-`X-Survey-Release` (`DR18`). Extras: `X-Backend-Cache: HIT|MISS`, `X-Image-Resampled: 1`.
-`X-Projection`, `X-Observation-Time` and `X-Wavelength` are never sent for SDSS JPEG composites.
+## Removed in the SPHEREx migration
+
+SDSS cutout provider, SDSS coverage detection, SDSS SkyServer SQL, SDSS targets, the disk image cache, `GET /api/images/cutout` (it returned SDSS JPEGs; with
+Aladin reading HiPS tiles directly there is no consumer, so it is removed rather than left misleading) and the Pillow dependency.
 
 ## Verified upstream behaviour (checked live, 2026-11-14)
 
-* **Cutout** `skyserver.sdss.org/dr18/SkyServerWS/ImgCutout/getjpeg`: `ra, dec, scale, width, height`, `opt=G` adds a grid.
-  Limits: scale 0.015-60 "/px, width/height 64-2048.
-* **Coverage:** outside the footprint SDSS returns **HTTP 404 with an `image/jpeg` body** reading "Requested (ra, dec) is outside the SDSS footprint."
-  That status is the only coverage signal used; image darkness is never inspected (a dark image is a valid image).
-  A 404 with a non-JPEG body is treated as an upstream fault, not as missing coverage.
-* **Catalogue:** `SearchTools/SqlSearch` with `dbo.fGetNearbyObjEq` joined to `PhotoObjAll` (primary detections, `type` in 0/3/6).
-  Empty results arrive as an empty `Table1`; failures arrive as JSON with `ErrorCode`.
-* **Resolver:** `cds.unistra.fr/cgi-bin/nph-sesame/-oxp/SNV?<name>` returns XML and redirects to a mirror; redirects are followed only to an allowlisted host set.
+* **IRSA HiPS** `https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube/properties`: a HiPS cube, 102 frames, 512 px PNG tiles, orders 0-5, all-sky MOC.
+  `data_cube_crval3_arr` has the wavelength of every frame; `obs_description` documents blank frames 50 and 51 (0-based). `access-control-allow-origin: *`.
+* **CDS Sesame** `cds.unistra.fr/cgi-bin/nph-sesame/-oxp/SNV?<name>` returns XML and redirects to a mirror (followed only to an allowlisted host set).
+* **SIMBAD TAP** `POST <tap>/sync` (`request=doQuery&lang=adql&format=json`). The CDS primary host served an HTML "page unavailable" page at verification time, so the
+  provider fails over to the official Harvard mirror. ADQL errors arrive as a VOTable (`QUERY_STATUS=ERROR`) and are treated as failures, never as "no matches".
+  ADQL does not allow expressions in `ORDER BY`; use a column alias.
 
 ## Architecture
 
 ```
-app/api/        routes (thin)              app/providers/   upstream-specific code: sdss.py, sesame.py, http.py
-app/services/   caching, validation,       app/models/      error envelope + response schemas
-                target selection           app/utils/       haversine, TTL cache, retry
-app/data/verified_targets.json             scripts/verify_targets.py   regenerates that file from live services
+app/api/        routes (thin)                 app/providers/   spherex.py (HiPS metadata), sesame.py, simbad.py, http.py, base.py (contracts)
+app/services/   caching, validation, targets  app/models/      error envelope + response schemas
+app/data/verified_targets.json                scripts/verify_targets.py   regenerates it from live services
 ```
 
-* **Providers behind a contract** (`providers/base.py`): `ImageProvider.get_cutout` returns a `CutoutResult` (bytes, media type,
-  `ImageMetadata` whose unknown fields are `None`). A SPHEREx provider can return FITS-derived renderings with timestamps and
-  wavelengths without touching routes or caching. Not every provider has to emit JPEG natively.
-* **Image cache:** bounded filesystem cache (`backend/.cache/images`, 256 MB, 24 h TTL, LRU eviction), keyed on survey/RA/Dec/scale/size/grid,
-  storing metadata next to the image. Identical concurrent misses share one upstream fetch. Errors are never cached.
-  Coordinates are rounded to 1e-6 deg (about 4 mas) so keys are stable.
-* **Resilience:** 5 s connect / 20 s read timeouts; 2 retries with exponential backoff + jitter for connect errors and 502/503/504 (not for read timeouts or other statuses);
-  upstream size caps; JPEG signature **and** full decode check; max 6 concurrent upstream calls.
-* **Security:** fixed upstream hosts, no user-supplied URLs, SQL built only from validated numbers, NaN/inf rejected, name length/control-character limits,
-  defused XML parsing, CORS limited to configured origins.
+`providers/base.py` separates *browser rendering* (Aladin, no provider) from *backend services*. `SurveyProvider.describe()` is the seam for a future
+timestamped-observation / FITS provider (IRSA), which can return wavelengths, observation times and WCS without touching routes.
 
 ## Targets
 
-`app/data/verified_targets.json` is produced by `scripts/verify_targets.py`, which resolves names with Sesame and checks coverage with the live cutout service
-(centre plus four points around it). Run `cd backend && ../.venv/bin/python scripts/verify_targets.py` after changing the release.
-
-**NGC 891 is not offered: SDSS DR18 has no imaging there** (verified). COSMOS field, Lockman Hole, M101 and M13 were added as verified alternatives.
-Random fields are sampled uniformly on the sphere inside two broad footprint regions and kept only if five points per field return real imagery.
-The "previous pick" memory is process-wide, not per user, and not shared across multiple workers.
+`scripts/verify_targets.py` (`pip install -r requirements-scripts.txt`) resolves each name via Sesame, applies SIMBAD proper motion to the cube's mid-epoch
+(2025.84) when an object has moved more than 20", and **fetches the real HiPS tiles** for the position (HEALPix NESTED index via `astropy-healpix`, orders 3 and 5,
+one frame per detector band). A position is kept only if every tile exists, decodes as PNG and is not blank. Random positions use uniform-on-the-sphere sampling
+(z = sin(dec) uniform) and pass the same check. Barnard's Star (10.39"/yr), WISE 0855 (8.15"/yr) and ε Indi B (4.68"/yr) are propagated and say so in their descriptions.
+Verification shows tiles with signal exist, not that an object is detected; a combined cube cannot show motion.
 
 ## Known limitations
 
-* **Image scale vs SDSS limits.** The frontend allows 0.05-120 "/px and any size; SDSS accepts 0.015-60 "/px and 64-2048 px. The backend requests an equivalent in-range image and
-  centre-crops/resamples it (flagged by `X-Image-Resampled`). If the requested field of view exceeds what SDSS can supply in one image
-  (roughly scale x max(width, height) > 122,880"; e.g. 1536 px at more than 80 "/px), the API returns `invalid_parameters` rather than a wrong-scale image.
-  Images under 64 px are cropped from a 64 px image, which can introduce at most a half-pixel centre offset.
-* JPEG cutouts carry no verified WCS or projection; the API sends none. Clicked coordinates remain approximate in the frontend.
-* `object_type` from Sesame is SIMBAD's short code (e.g. `AGN`, `Sy2`, `BY*`) returned as-is. Catalogue `object_type` is limited to SDSS photometric classes
-  Star / Galaxy / Unknown; catalogue matches have an SDSS `objID` but no common name.
-* Nearby search uses primary photometric detections only, so a spectroscopic or named counterpart is not joined in.
-* The coverage guarantee is "SDSS DR18's cutout service returned imagery", not data quality. Multiple workers do not share the in-memory caches.
+* In-memory caches (survey info, name resolution, catalogue) and the "no immediate repeat" random pick are per process, not shared between workers.
+* SIMBAD object types are SIMBAD's descriptions; matches are catalogue records, never labelled as SPHEREx detections.
+* `object_type` from Sesame is SIMBAD's short code (e.g. `AGN`, `BY*`), returned as-is.

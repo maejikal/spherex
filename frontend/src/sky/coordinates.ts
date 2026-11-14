@@ -9,9 +9,10 @@ export interface CoordinateInputResult {
   error?: string;
 }
 
-export const DEFAULT_SCALE_ARCSEC_PER_PIXEL = 0.4;
-export const MIN_SCALE_ARCSEC_PER_PIXEL = 0.05;
-export const MAX_SCALE_ARCSEC_PER_PIXEL = 120;
+/** Scale is arcseconds per CSS pixel of the viewer width (Aladin FOV = width * scale / 3600). */
+export const DEFAULT_SCALE_ARCSEC_PER_PIXEL = 2.5;
+export const MIN_SCALE_ARCSEC_PER_PIXEL = 0.2;
+export const MAX_SCALE_ARCSEC_PER_PIXEL = 500;
 
 const RADIANS_PER_ARCSECOND = Math.PI / (180 * 3600);
 const DEGREES_PER_RADIAN = 180 / Math.PI;
@@ -42,7 +43,7 @@ export function parseCoordinateInput(raText: string, decText: string): Coordinat
 /**
  * Convert image-pixel offsets to approximate ICRS coordinates using an inverse
  * gnomonic projection. The cutout convention is north-up, east-left; results
- * remain approximate because an SDSS JPEG does not carry verified WCS metadata.
+ * are used for programmatic pans (buttons/keys); pointer-to-sky conversion comes from Aladin Lite.
  */
 export function coordinateAtPixelOffset(
   center: SkyCoordinates,
@@ -143,36 +144,4 @@ export function zoomScale(
 
 export function formatCoordinate(value: number, digits = 5): string {
   return Number.isFinite(value) ? value.toFixed(digits) : 'Unavailable';
-}
-
-/**
- * Forward gnomonic projection: the exact inverse of `coordinateAtPixelOffset`. Returns the pixel
- * offset (x right, y down, north-up/east-left) of `target` from `center`, or null when the target
- * is on the far hemisphere and has no tangent-plane image.
- */
-export function pixelOffsetOfCoordinate(
-  center: SkyCoordinates,
-  target: SkyCoordinates,
-  scaleArcsecPerPixel: number,
-): { x: number; y: number } | null {
-  if (
-    !Number.isFinite(center.ra) || !Number.isFinite(center.dec) ||
-    !Number.isFinite(target.ra) || !Number.isFinite(target.dec) ||
-    !Number.isFinite(scaleArcsecPerPixel) || scaleArcsecPerPixel <= 0
-  ) {
-    return null;
-  }
-  const ra0 = center.ra / DEGREES_PER_RADIAN;
-  const dec0 = center.dec / DEGREES_PER_RADIAN;
-  const ra = target.ra / DEGREES_PER_RADIAN;
-  const dec = target.dec / DEGREES_PER_RADIAN;
-  const deltaRa = ra - ra0;
-  const cosC = Math.sin(dec0) * Math.sin(dec) + Math.cos(dec0) * Math.cos(dec) * Math.cos(deltaRa);
-  if (cosC <= 1e-6) return null;
-  const east = (Math.cos(dec) * Math.sin(deltaRa)) / cosC;
-  const north = (Math.cos(dec0) * Math.sin(dec) - Math.sin(dec0) * Math.cos(dec) * Math.cos(deltaRa)) / cosC;
-  const perPixel = scaleArcsecPerPixel * RADIANS_PER_ARCSECOND;
-  const x = -east / perPixel;
-  const y = -north / perPixel;
-  return { x: Object.is(x, -0) ? 0 : x, y: Object.is(y, -0) ? 0 : y };
 }

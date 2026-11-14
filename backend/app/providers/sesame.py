@@ -55,7 +55,7 @@ class SesameResolver:
             if urlsplit(url).scheme != "https" or host not in allowed:
                 raise UpstreamInvalidResponse("Name resolver redirected to an untrusted host.")
             response = await self._upstream.get(
-                url, max_bytes=self._settings.max_upstream_json_bytes, accept="text/xml, application/xml, */*"
+                url, max_bytes=self._settings.max_upstream_text_bytes, accept="text/xml, application/xml, */*"
             )
             if response.status in (301, 302, 303, 307, 308):
                 location = response.headers.get("location")

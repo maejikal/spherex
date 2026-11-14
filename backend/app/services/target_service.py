@@ -1,8 +1,8 @@
-"""Curated, coverage-verified targets.
+"""Curated, coverage-verified SPHEREx targets.
 
 All coordinates come from ``app/data/verified_targets.json``, produced by
-``backend/scripts/verify_targets.py``, which resolves names through CDS Sesame and checks SDSS imaging
-coverage against the live cutout service. Nothing here is generated at request time.
+``backend/scripts/verify_targets.py``: names are resolved through CDS Sesame and the real SPHEREx HiPS
+tiles at each position are fetched and checked. Nothing here is generated at request time.
 """
 
 from __future__ import annotations

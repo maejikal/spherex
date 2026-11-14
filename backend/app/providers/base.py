@@ -1,9 +1,11 @@
 """Provider contracts.
 
-Providers hide upstream request/response details. ``ImageProvider`` deliberately returns a
-``CutoutResult`` that describes *what bytes were produced and what is truly known about them*, so
-a future SPHEREx provider can return FITS-derived renderings together with timestamps, wavelengths
-and WCS, while a JPEG-composite provider such as SDSS leaves those fields ``None``.
+The application has two separate concerns:
+
+* **Browser survey rendering** - Aladin Lite reads SPHEREx HiPS tiles straight from IRSA. No provider
+  sits in that path.
+* **Backend scientific services** - survey metadata, name resolution, catalogue lookups, and (later)
+  FITS processing and observation discovery. These are the providers below.
 """
 
 from __future__ import annotations
@@ -13,48 +15,14 @@ from typing import Protocol
 
 
 @dataclass(frozen=True, slots=True)
-class CutoutRequest:
-    ra: float
-    dec: float
-    scale: float  # arcseconds per pixel
-    width: int
-    height: int
-    grid: bool = False
+class SpectralChannel:
+    """One frame of a spectral cube. ``wavelength_um`` comes from the service, never computed."""
 
-
-@dataclass(frozen=True, slots=True)
-class ImageMetadata:
-    """Provenance of a rendered cutout. ``None`` means *unknown*, never a guess."""
-
-    source_url: str | None = None
-    projection: str | None = None
-    coordinate_frame: str | None = None
-    observation_time: str | None = None
-    wavelength: str | None = None
-    survey_release: str | None = None
-    resampled: bool = False
-
-    def to_dict(self) -> dict:
-        return {
-            "source_url": self.source_url,
-            "projection": self.projection,
-            "coordinate_frame": self.coordinate_frame,
-            "observation_time": self.observation_time,
-            "wavelength": self.wavelength,
-            "survey_release": self.survey_release,
-            "resampled": self.resampled,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "ImageMetadata":
-        return cls(**{k: data.get(k) for k in cls.__dataclass_fields__ if k != "resampled"}, resampled=bool(data.get("resampled")))
-
-
-@dataclass(frozen=True, slots=True)
-class CutoutResult:
-    content: bytes
-    media_type: str
-    metadata: ImageMetadata = field(default_factory=ImageMetadata)
+    frame: int  # 0-based; equals the tile-file suffix
+    band: int
+    band_channel: int
+    wavelength_um: float
+    has_data: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,19 +32,30 @@ class SurveyInfo:
     release: str
     available: bool
     description: str
+    data_source: str
+    hips_url: str | None = None
+    tile_format: str | None = None
+    tile_width: int | None = None
+    max_order: int | None = None
+    coordinate_frame: str | None = None
+    sky_fraction: float | None = None
+    observation_window_mjd: tuple[float, float] | None = None
+    channels: tuple[SpectralChannel, ...] = field(default_factory=tuple)
 
 
-class ImageProvider(Protocol):
-    """An imaging survey. Implementations must raise ``AppError`` subclasses, never return fakes."""
+class SurveyProvider(Protocol):
+    """A survey the backend can describe. Future providers (e.g. timestamped SPHEREx observations
+    from IRSA FITS services) implement the same contract and register next to the HiPS cube."""
 
-    survey: SurveyInfo
+    survey_id: str
 
-    async def get_cutout(self, request: CutoutRequest) -> CutoutResult: ...
+    async def describe(self) -> SurveyInfo: ...
 
 
 @dataclass(frozen=True, slots=True)
 class CatalogueMatch:
     id: str
+    name: str
     ra: float
     dec: float
     separation_arcsec: float

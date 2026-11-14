@@ -1,11 +1,16 @@
 import type { SkyCoordinates } from '../sky/coordinates.ts';
 
-export type SurveyId = 'sdss-dr18';
+import type { SurveyId } from '../sky/spherex/config.ts';
+
+export type { SurveyId };
 
 export interface ExplorerView extends SkyCoordinates {
+  /** Arcseconds per CSS pixel of the viewer width. */
   scale: number;
   survey: SurveyId;
   grid: boolean;
+  /** 0-based SPHEREx cube frame; null means the service's default frame. */
+  channel: number | null;
 }
 
 export interface SkyTarget extends SkyCoordinates {
@@ -26,26 +31,6 @@ export interface CatalogObject extends SkyCoordinates {
   objectType?: string;
   separationArcsec?: number;
   source?: string;
-}
-
-export interface CutoutRequest extends ExplorerView {
-  width: number;
-  height: number;
-}
-
-export interface CutoutResponse {
-  blob: Blob;
-  contentType: string;
-  metadata: CutoutMetadata;
-}
-
-export interface CutoutMetadata {
-  sourceUrl: string | null;
-  projection: string | null;
-  coordinateFrame: string | null;
-  observationTime: string | null;
-  wavelength: string | null;
-  surveyRelease: string | null;
 }
 
 export interface ApiHealth {

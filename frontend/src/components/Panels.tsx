@@ -23,6 +23,10 @@ import { findNearbyObjects, getRandomTarget, listSuggestedTargets, resolveObject
 import type { CatalogObject, ExplorerView } from '../api/types.ts';
 import type { SkyCoordinates } from '../sky/coordinates.ts';
 import { calculateFieldOfView, formatCoordinate, parseCoordinateInput } from '../sky/coordinates.ts';
+import { channelForFrame, channelLabel, formatWavelength } from '../sky/spherex/channels.ts';
+import { SPHEREX_HIPS_URL } from '../sky/spherex/config.ts';
+import type { SphereXSurveyInfo } from '../sky/spherex/properties.ts';
+import { WavelengthSelector } from './WavelengthSelector.tsx';
 
 interface FindPanelProps {
   view: ExplorerView | null;
@@ -89,7 +93,7 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
     try {
       const target = await randomMutation.mutateAsync();
       onNavigate(target, target.name);
-      setNotice(`Loaded verified covered position${target.name ? ` ${target.name}` : ''}: ${formatCoordinate(target.ra, 4)}°, ${target.dec >= 0 ? '+' : ''}${formatCoordinate(target.dec, 4)}°.`);
+      setNotice(`Loaded verified sky position${target.name ? ` ${target.name}` : ''}: ${formatCoordinate(target.ra, 4)}°, ${target.dec >= 0 ? '+' : ''}${formatCoordinate(target.dec, 4)}°.`);
     } catch {
       setNotice(null);
     }
@@ -168,7 +172,7 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
       <section className="panel-section" aria-labelledby="suggested-heading">
         <div className="section-heading">
           <h3 id="suggested-heading">Verified destinations</h3>
-          <p>Only targets returned by the coverage-aware API appear.</p>
+          <p>Curated SPHEREx destinations returned by the API.</p>
         </div>
         {targets.isPending && (
           <p className="inline-status" role="status"><LoaderCircle className="spin" aria-hidden="true" size={15} /> Checking verified destinations…</p>
@@ -186,7 +190,7 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
         {targets.isSuccess && targets.data.length === 0 && (
           <div className="callout">
             <Info aria-hidden="true" size={17} />
-            <div><strong>No verified suggestions loaded</strong><p>Only destinations with confirmed SDSS coverage appear here.</p></div>
+            <div><strong>No verified suggestions loaded</strong><p>The API returned no curated SPHEREx destinations.</p></div>
           </div>
         )}
         {targets.isSuccess && targets.data.length > 0 && (
@@ -213,7 +217,7 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
           disabled={randomMutation.isPending}
         >
           {randomMutation.isPending ? <LoaderCircle className="spin" aria-hidden="true" size={15} /> : <Target aria-hidden="true" size={15} />}
-          {randomMutation.isPending ? 'Choosing covered position…' : 'Random covered position'}
+          {randomMutation.isPending ? 'Choosing position…' : 'Random sky position'}
         </button>
         {randomMutation.isError && <InlineError message={errorMessage(randomMutation.error, 'No verified covered position was returned.')} />}
       </section>
@@ -227,6 +231,12 @@ interface ViewPanelProps {
   width: number;
   height: number;
   crosshair: boolean;
+  survey: SphereXSurveyInfo | undefined;
+  surveyPending: boolean;
+  surveyError: Error | null;
+  frame: number | null;
+  loading: boolean;
+  onChannelChange: (frame: number) => void;
   canReset: boolean;
   onZoom: (direction: 'in' | 'out') => void;
   onPan: (direction: 'north' | 'south' | 'east' | 'west') => void;
@@ -240,6 +250,12 @@ export function ViewPanel({
   width,
   height,
   crosshair,
+  survey,
+  surveyPending,
+  surveyError,
+  frame,
+  loading,
+  onChannelChange,
   canReset,
   onZoom,
   onPan,
@@ -251,6 +267,16 @@ export function ViewPanel({
 
   return (
     <div className="panel-stack">
+      <WavelengthSelector
+        survey={survey}
+        surveyPending={surveyPending}
+        surveyError={surveyError}
+        frame={frame}
+        loading={loading}
+        disabled={!view}
+        onChange={onChannelChange}
+      />
+
       <section className="panel-section" aria-labelledby="navigate-image-heading">
         <div className="section-heading">
           <h3 id="navigate-image-heading">Navigate image</h3>
@@ -273,19 +299,19 @@ export function ViewPanel({
           <span className="compass__center" aria-hidden="true">N</span>
           <button type="button" className="icon-button compass compass--east" aria-label="Pan sky east" title="Pan sky east" disabled={!view} onClick={() => onPan('east')}><ArrowRight size={15} aria-hidden="true" /></button>
           <button type="button" className="icon-button compass compass--south" aria-label="Pan sky south" title="Pan sky south" disabled={!view} onClick={() => onPan('south')}><ArrowDown size={15} aria-hidden="true" /></button>
-          <span className="fov-readout">{fieldOfView ? `~${fieldOfView.widthArcminutes.toFixed(1)}′ × ${fieldOfView.heightArcminutes.toFixed(1)}′` : 'FOV unavailable'}</span>
+          <span className="fov-readout">{fieldOfView ? formatFieldOfView(fieldOfView.widthArcminutes, fieldOfView.heightArcminutes) : 'FOV unavailable'}</span>
         </div>
-        {view && <p className="field-hint">Approximate FOV · scale {view.scale.toFixed(3)} arcsec/pixel</p>}
+        {view && <p className="field-hint">Field of view · scale {view.scale.toFixed(2)} arcsec/pixel</p>}
       </section>
 
       <section className="panel-section" aria-labelledby="overlays-heading">
         <div className="section-heading">
           <h3 id="overlays-heading">Overlays</h3>
-          <p>Coordinate grid uses SDSS image overlay; crosshair is local.</p>
+          <p>Coordinate grid is drawn by Aladin Lite; crosshair is local.</p>
         </div>
         <label className="toggle-row">
           <span className="toggle-row__icon"><Grid2X2 aria-hidden="true" size={16} /></span>
-          <span><strong>Coordinate grid</strong><small>Provided by SDSS cutout service</small></span>
+          <span><strong>Coordinate grid</strong><small>Celestial grid that moves with the sky</small></span>
           <input type="checkbox" checked={view?.grid ?? false} disabled={!view} onChange={(event) => onGridChange(event.target.checked)} />
         </label>
         <label className="toggle-row">
@@ -294,35 +320,19 @@ export function ViewPanel({
           <input type="checkbox" checked={crosshair} onChange={(event) => onCrosshairChange(event.target.checked)} />
         </label>
       </section>
-      {!view && <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>Load a covered position first</strong><p>Zoom, pan, and grid options activate after coordinates are set.</p></div></div>}
+      {!view && <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>Load a sky position first</strong><p>Zoom, pan, and grid options activate after coordinates are set.</p></div></div>}
     </div>
   );
 }
 
-export interface LoadedCutoutInfo {
-  width: number;
-  height: number;
-  requestedWidth: number;
-  requestedHeight: number;
-  metadata: {
-    sourceUrl: string | null;
-    projection: string | null;
-    coordinateFrame: string | null;
-    observationTime: string | null;
-    wavelength: string | null;
-    surveyRelease: string | null;
-  };
-  center: SkyCoordinates;
-  scale: number;
-  survey: 'sdss-dr18';
-}
-
 interface InspectPanelProps {
-  selection: (SkyCoordinates & { accuracy: 'approximate' }) | null;
-  cutout: LoadedCutoutInfo | null;
+  selection: (SkyCoordinates & { accuracy: 'projection' }) | null;
+  view: ExplorerView | null;
+  survey: SphereXSurveyInfo | undefined;
+  loading: boolean;
 }
 
-export function InspectPanel({ selection, cutout }: InspectPanelProps) {
+export function InspectPanel({ selection, view, survey, loading }: InspectPanelProps) {
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const nearby = useQuery({
     queryKey: ['objects', 'nearby', selection?.ra, selection?.dec],
@@ -337,40 +347,43 @@ export function InspectPanel({ selection, cutout }: InspectPanelProps) {
     const value = `${formatCoordinate(selection.ra, 6)}°, ${selection.dec >= 0 ? '+' : ''}${formatCoordinate(selection.dec, 6)}°`;
     try {
       await navigator.clipboard.writeText(value);
-      setCopyMessage('Approximate clicked coordinates copied.');
+      setCopyMessage('Selected coordinates copied.');
     } catch {
       setCopyMessage('Clipboard unavailable; coordinates are shown above.');
     }
   };
+
+  const frame = view && survey ? (view.channel ?? survey.firstFrame) : null;
+  const channel = survey && frame !== null ? channelForFrame(survey, frame) : null;
 
   return (
     <div className="panel-stack">
       <section className="panel-section" aria-labelledby="selection-heading">
         <div className="section-heading">
           <h3 id="selection-heading">Clicked position</h3>
-          <p>JPEG-derived coordinate is approximate; no verified WCS is supplied.</p>
+          <p>Sky position under the pointer, from Aladin Lite's HiPS projection.</p>
         </div>
         {selection ? (
           <div className="coordinate-readout">
             <div><span>RA · ICRS</span><strong>{formatCoordinate(selection.ra, 6)}°</strong></div>
             <div><span>Dec · ICRS</span><strong>{selection.dec >= 0 ? '+' : ''}{formatCoordinate(selection.dec, 6)}°</strong></div>
-            <span className="status-badge status-badge--approx">Approximate</span>
+            <span className="status-badge">Selected</span>
           </div>
         ) : (
-          <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>No point selected</strong><p>Click a position in loaded imagery to inspect it.</p></div></div>
+          <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>No point selected</strong><p>Click the sky to inspect a position.</p></div></div>
         )}
       </section>
 
       <section className="panel-section" aria-labelledby="catalogue-heading">
         <div className="section-heading">
           <h3 id="catalogue-heading">Catalogue matches</h3>
-          <p>Catalogue-object coordinates stay separate from clicked coordinates.</p>
+          <p>SIMBAD objects near the position. These are not SPHEREx detections.</p>
         </div>
-        {!selection && <p className="empty-inline">Select an image position to query the documented catalogue service.</p>}
-        {selection && nearby.isPending && <p className="inline-status" role="status"><LoaderCircle className="spin" aria-hidden="true" size={15} /> Searching catalogue…</p>}
+        {!selection && <p className="empty-inline">Select a sky position to query SIMBAD.</p>}
+        {selection && nearby.isPending && <p className="inline-status" role="status"><LoaderCircle className="spin" aria-hidden="true" size={15} /> Searching SIMBAD…</p>}
         {selection && nearby.isError && <InlineError message={errorMessage(nearby.error, 'Catalogue lookup failed.')} />}
         {selection && nearby.isSuccess && nearby.data.length === 0 && (
-          <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>No catalogue matches returned</strong><p>API returned no matches within 30 arcseconds.</p></div></div>
+          <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>No catalogue matches returned</strong><p>SIMBAD has no objects within 30 arcseconds.</p></div></div>
         )}
         {selection && nearby.isSuccess && nearby.data.length > 0 && (
           <ul className="match-list">
@@ -388,19 +401,19 @@ export function InspectPanel({ selection, cutout }: InspectPanelProps) {
       <section className="panel-section" aria-labelledby="provenance-heading">
         <div className="section-heading">
           <h3 id="provenance-heading">Image provenance</h3>
-          <p>Unavailable values remain explicit.</p>
+          <p>Values come from the HiPS dataset description; unavailable values stay explicit.</p>
         </div>
         <dl className="provenance-list">
-          <ProvenanceRow label="Survey / release" value={cutout ? cutout.metadata.surveyRelease ?? 'SDSS DR18 (requested)' : 'Unavailable'} />
-          <ProvenanceRow label="Requested center" value={cutout ? `${formatCoordinate(cutout.center.ra, 5)}°, ${cutout.center.dec >= 0 ? '+' : ''}${formatCoordinate(cutout.center.dec, 5)}°` : 'Unavailable'} />
-          <ProvenanceRow label="JPEG dimensions" value={cutout ? `${cutout.width} × ${cutout.height} px` : 'Unavailable'} />
-          <ProvenanceRow label="Requested dimensions" value={cutout ? `${cutout.requestedWidth} × ${cutout.requestedHeight} px` : 'Unavailable'} />
-          <ProvenanceRow label="Requested pixel scale" value={cutout ? `${cutout.scale.toFixed(3)} arcsec/pixel` : 'Unavailable'} />
-          <ProvenanceRow label="Projection" value={cutout?.metadata.projection ?? 'Not returned by API'} />
-          <ProvenanceRow label="Coordinate frame" value={cutout ? cutout.metadata.coordinateFrame ?? 'ICRS input' : 'Unavailable'} />
-          <ProvenanceRow label="Source URL" value={cutout?.metadata.sourceUrl ?? 'Not returned by API'} link={Boolean(cutout?.metadata.sourceUrl)} />
-          <ProvenanceRow label="Observation time" value={cutout?.metadata.observationTime ?? 'Not provided by JPEG cutout'} />
-          <ProvenanceRow label="Wavelength" value={cutout?.metadata.wavelength ?? 'Not provided by JPEG cutout'} />
+          <ProvenanceRow label="Survey / release" value={survey ? `${survey.collection} · ${survey.title}` : 'Unavailable'} />
+          <ProvenanceRow label="Wavelength" value={channel ? `${formatWavelength(channel.wavelengthUm)} · ${channelLabel(channel)}` : 'Unavailable'} />
+          <ProvenanceRow label="Cube frame" value={channel && survey ? `${channel.frame} of ${survey.depth - 1} (0-based)` : 'Unavailable'} />
+          <ProvenanceRow label="Requested center" value={view ? `${formatCoordinate(view.ra, 5)}°, ${view.dec >= 0 ? '+' : ''}${formatCoordinate(view.dec, 5)}°` : 'Unavailable'} />
+          <ProvenanceRow label="Scale" value={view ? `${view.scale.toFixed(2)} arcsec/pixel` : 'Unavailable'} />
+          <ProvenanceRow label="Tiles" value={survey ? `${survey.tileFormat.toUpperCase()} · ${survey.tileWidth}px · HiPS order ≤ ${survey.maxOrder}` : 'Unavailable'} />
+          <ProvenanceRow label="Coordinate frame" value={survey ? `${survey.frame} (ICRS)` : 'Unavailable'} />
+          <ProvenanceRow label="Source URL" value={survey ? SPHEREX_HIPS_URL : 'Not available'} link={Boolean(survey)} />
+          <ProvenanceRow label="Observation time" value={survey ? 'Combined cube — no single epoch' : 'Unavailable'} />
+          <ProvenanceRow label="Imagery status" value={loading ? 'Loading tiles…' : 'Idle'} />
         </dl>
         <button className="button button--secondary button--full" type="button" disabled={!selection} onClick={() => void copyCoordinates()}>
           {copyMessage?.includes('copied') ? <Check aria-hidden="true" size={15} /> : <Copy aria-hidden="true" size={15} />}
@@ -439,4 +452,9 @@ function InlineError({ message }: { message: string }) {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function formatFieldOfView(widthArcminutes: number, heightArcminutes: number): string {
+  if (widthArcminutes >= 120) return `~${(widthArcminutes / 60).toFixed(1)}° × ${(heightArcminutes / 60).toFixed(1)}°`;
+  return `~${widthArcminutes.toFixed(1)}′ × ${heightArcminutes.toFixed(1)}′`;
 }

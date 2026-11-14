@@ -38,6 +38,7 @@ async def nearby(
         matches=[
             MatchOut(
                 id=m.id,
+                name=m.name,
                 ra=m.ra,
                 dec=m.dec,
                 object_type=m.object_type,

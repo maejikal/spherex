@@ -59,7 +59,9 @@ test('drag pans from absolute sky center and zoom round trip is stable', () => {
   assert.ok(panned.ra > center.ra);
   assert.ok(panned.dec < center.dec);
 
-  const zoomed = zoomScale(0.4, 'in');
-  assert.ok(zoomed < 0.4);
-  assert.ok(Math.abs(zoomScale(zoomed, 'out') - 0.4) < 1e-12);
+  const zoomed = zoomScale(2.5, 'in');
+  assert.ok(zoomed < 2.5);
+  assert.ok(Math.abs(zoomScale(zoomed, 'out') - 2.5) < 1e-12);
+  assert.equal(zoomScale(0.2, 'in'), 0.2);
+  assert.equal(zoomScale(500, 'out'), 500);
 });

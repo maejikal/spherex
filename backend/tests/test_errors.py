@@ -1,12 +1,18 @@
 import logging
 
-from conftest import SDSS_JPEG
+from conftest import PROPERTIES_URL
 
 
 def test_unknown_route_uses_error_envelope(client):
     resp = client.get("/api/nope")
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "not_found"
+
+
+def test_removed_sdss_image_route_is_gone(client, upstream):
+    resp = client.get("/api/images/cutout", params={"ra": 180, "dec": 0.5})
+    assert resp.status_code == 404 and resp.json()["error"]["code"] == "not_found"
+    assert upstream.calls.call_count == 0
 
 
 def test_method_not_allowed_uses_envelope(client):
@@ -28,13 +34,21 @@ def test_unexpected_exception_is_hidden_and_logged(client, caplog):
 
 
 def test_errors_are_not_cacheable(client, upstream):
-    upstream.get(SDSS_JPEG).respond(404, content=b"\xff\xd8\xff", headers={"content-type": "image/jpeg"})
-    resp = client.get("/api/images/cutout", params={"ra": 1, "dec": 1})
+    upstream.get(PROPERTIES_URL).respond(503)
+    resp = client.get("/api/surveys")
     assert resp.headers["cache-control"] == "no-store"
 
 
-def test_openapi_is_served(client):
+def test_cors_allows_only_configured_origins(client, upstream):
+    ok = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    assert ok.headers["access-control-allow-origin"] == "http://localhost:5173"
+    other = client.get("/api/health", headers={"Origin": "http://evil.example"})
+    assert "access-control-allow-origin" not in other.headers
+
+
+def test_openapi_is_served_and_lists_only_current_routes(client):
     paths = client.get("/openapi.json").json()["paths"]
-    for p in ("/api/health", "/api/surveys", "/api/images/cutout", "/api/objects/resolve",
-              "/api/objects/nearby", "/api/targets/suggested", "/api/targets/random"):
+    for p in ("/api/health", "/api/surveys", "/api/objects/resolve", "/api/objects/nearby",
+              "/api/targets/suggested", "/api/targets/random"):
         assert p in paths
+    assert "/api/images/cutout" not in paths

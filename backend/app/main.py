@@ -14,31 +14,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import health, images, objects, surveys, targets
+from .api import health, objects, surveys, targets
 from .api.deps import Services
 from .config import Settings, get_settings
 from .models.errors import AppError
 from .providers.http import UpstreamClient
-from .providers.sdss import SDSSCatalogueProvider, SDSSImageProvider
 from .providers.sesame import SesameResolver
+from .providers.simbad import SimbadCatalogue
+from .providers.spherex import SphereXHiPSProvider
 from .services.catalogue_search import CatalogueSearchService
-from .services.image_cache import ImageCache
-from .services.image_service import ImageService
 from .services.object_resolver import ObjectResolverService
 from .services.target_service import DEFAULT_DATA_FILE, TargetService
 
 log = logging.getLogger("skyexplorer")
 
-EXPOSED_HEADERS = [
-    "X-Source-URL",
-    "X-Projection",
-    "X-Coordinate-Frame",
-    "X-Observation-Time",
-    "X-Wavelength",
-    "X-Survey-Release",
-    "X-Backend-Cache",
-    "X-Image-Resampled",
-]
 
 
 def _error_response(code: str, message: str, status: int, headers: dict[str, str] | None = None) -> JSONResponse:
@@ -60,18 +49,14 @@ def build_services(settings: Settings, targets_file: Path = DEFAULT_DATA_FILE) -
             client, service=service, retries=settings.max_retries, backoff_base=settings.retry_backoff_base, semaphore=semaphore
         )
 
-    sdss = SDSSImageProvider(upstream("SDSS"), settings)
+    spherex = SphereXHiPSProvider(upstream("SPHEREx HiPS (IRSA)"), settings)
     sesame = SesameResolver(upstream("CDS Sesame"), settings)
-    cache = ImageCache(
-        settings.cache_dir, ttl_seconds=settings.image_cache_ttl_seconds, max_bytes=settings.image_cache_max_bytes
-    )
     return Services(
         http=client,
-        images=ImageService({sdss.survey.id: sdss}, cache),
-        sdss=sdss,
+        spherex=spherex,
         sesame=sesame,
         resolver=ObjectResolverService(sesame, settings),
-        catalogue=CatalogueSearchService(SDSSCatalogueProvider(upstream("SDSS catalogue"), settings), settings),
+        catalogue=CatalogueSearchService(SimbadCatalogue(upstream("SIMBAD"), settings), settings),
         targets=TargetService(targets_file),
     )
 
@@ -91,8 +76,9 @@ def create_app(settings: Settings | None = None, targets_file: Path = DEFAULT_DA
     app = FastAPI(
         title="Sky Explorer API",
         version="0.1.0",
-        description="Backend for the Sky Explorer frontend. Serves real SDSS DR18 imagery and catalogue data; "
-        "resolves names through CDS Sesame. No data is fabricated.",
+        description="Backend scientific services for the Sky Explorer frontend: SPHEREx survey metadata, "
+        "CDS Sesame name resolution, SIMBAD object lookup and verified SPHEREx targets. Sky imagery itself is "
+        "rendered in the browser by Aladin Lite from the NASA/IPAC IRSA SPHEREx HiPS. No data is fabricated.",
         lifespan=lifespan,
     )
 
@@ -101,7 +87,6 @@ def create_app(settings: Settings | None = None, targets_file: Path = DEFAULT_DA
         allow_origins=settings.cors_origins,
         allow_methods=["GET"],
         allow_headers=["Accept", "Content-Type"],
-        expose_headers=EXPOSED_HEADERS,
     )
 
     @app.exception_handler(AppError)
@@ -128,7 +113,7 @@ def create_app(settings: Settings | None = None, targets_file: Path = DEFAULT_DA
         log.exception("unhandled error on %s", request.url.path, exc_info=exc)
         return _error_response("internal_error", "An unexpected error occurred.", 500)
 
-    for router in (health.router, surveys.router, images.router, objects.router, targets.router):
+    for router in (health.router, surveys.router, objects.router, targets.router):
         app.include_router(router, prefix="/api")
 
     return app

@@ -1,13 +1,49 @@
 {
   "provenance": {
-    "generated_at": "2026-11-14T06:02:46+00:00",
+    "generated_at": "2026-11-14T07:38:55+00:00",
     "script": "backend/scripts/verify_targets.py",
-    "coordinates": "Suggested targets resolved via CDS Sesame; random fields sampled uniformly on the sphere in known-footprint regions.",
-    "coverage_method": "Live SDSS DR18 ImgCutout/getjpeg; HTTP 404 'outside the SDSS footprint' means no imaging. Suggested targets checked at centre and 4 points 0.05 deg away; random fields at centre and 4 points 0.15 deg away.",
-    "limitations": "Coverage means SDSS DR18 returned imagery for the point; it does not imply deep or high-S/N data. The footprint can change between data releases; re-run this script after upgrading the release.",
-    "seed": 18
+    "survey": "SPHEREx DR1 all-sky cube HiPS (NASA/IPAC IRSA)",
+    "coordinates": "Suggested targets resolved via CDS Sesame (SIMBAD); proper-motion objects propagated to the cube's mid-epoch. Random positions drawn uniformly on the sphere.",
+    "coverage_method": "Real HiPS tiles fetched for HEALPix orders [3, 5] and cube frames [5, 22, 40, 60, 76, 95] (one per band); each must return HTTP 200, decode as PNG and be non-blank.",
+    "limitations": "Verification shows tiles exist with signal, not that an object is detected or well measured. The cube is a combined all-sky product, so it cannot show motion; a high-proper-motion object appears at an epoch-averaged position. Re-run after any new data release.",
+    "seed": 7
   },
   "suggested": [
+    {
+      "id": "barnards-star",
+      "name": "Barnard's Star",
+      "ra": 269.446305,
+      "dec": 4.76774,
+      "description": "Nearest single star system after the Alpha Centauri system; red dwarf with the largest known proper motion. Proper motion (10.39\"/yr, SIMBAD) has moved it 4.5' from its J2000 catalogue position; the position here is propagated to epoch 2025.8."
+    },
+    {
+      "id": "eps-indi-b",
+      "name": "Epsilon Indi B",
+      "ra": 331.096318,
+      "dec": -56.80055,
+      "description": "Binary brown-dwarf system (Ba and Bb) orbiting the star Epsilon Indi A. Proper motion (4.68\"/yr, SIMBAD) has moved it 2.0' from its J2000 catalogue position; the position here is propagated to epoch 2025.8."
+    },
+    {
+      "id": "wise-0855",
+      "name": "WISE 0855-0714",
+      "ra": 133.760131,
+      "dec": -7.242216,
+      "description": "Among the coldest known brown dwarfs (roughly 250-285 K), extremely faint at near-infrared wavelengths. Proper motion (8.15\"/yr, SIMBAD) has moved it 3.5' from its J2000 catalogue position; the position here is propagated to epoch 2025.8."
+    },
+    {
+      "id": "rw-aur",
+      "name": "RW Aurigae",
+      "ra": 76.956526,
+      "dec": 30.401438,
+      "description": "Young, variable T Tauri star system in the Taurus-Auriga star-forming region."
+    },
+    {
+      "id": "r-dra",
+      "name": "R Draconis",
+      "ra": 248.167611,
+      "dec": 66.754979,
+      "description": "Mira-type pulsating red giant, strongly variable in the infrared."
+    },
     {
       "id": "m31",
       "name": "Andromeda Galaxy (M31)",
@@ -16,348 +52,253 @@
       "description": "Nearest large spiral galaxy; spans several degrees on the sky."
     },
     {
-      "id": "m51",
-      "name": "Whirlpool Galaxy (M51)",
-      "ra": 202.469575,
-      "dec": 47.195258,
-      "description": "Face-on spiral galaxy interacting with its companion NGC 5195."
-    },
-    {
-      "id": "m87",
-      "name": "Virgo A (M87)",
-      "ra": 187.705931,
-      "dec": 12.391123,
-      "description": "Giant elliptical galaxy at the centre of the Virgo Cluster."
-    },
-    {
-      "id": "cosmos",
-      "name": "COSMOS field",
-      "ra": 150.119167,
-      "dec": 2.205833,
-      "description": "Well-studied extragalactic survey field in Sextans."
-    },
-    {
-      "id": "lockman",
-      "name": "Lockman Hole",
-      "ra": 161.25,
-      "dec": 58.0,
-      "description": "Sky region with very low Galactic hydrogen column density, used for deep extragalactic surveys."
-    },
-    {
-      "id": "m101",
-      "name": "Pinwheel Galaxy (M101)",
-      "ra": 210.802429,
-      "dec": 54.34875,
-      "description": "Large face-on spiral galaxy in Ursa Major."
-    },
-    {
-      "id": "m13",
-      "name": "Hercules Cluster (M13)",
-      "ra": 250.423475,
-      "dec": 36.461319,
-      "description": "Bright globular cluster in Hercules."
+      "id": "m42",
+      "name": "Orion Nebula (M42)",
+      "ra": 83.8201,
+      "dec": -5.3876,
+      "description": "Bright star-forming nebula in Orion."
     }
   ],
   "random_fields": [
     {
-      "id": "field-01",
-      "name": "Random SDSS field",
-      "ra": 128.42232,
-      "dec": 21.02259
+      "id": "sky-01",
+      "name": "Random SPHEREx sky position",
+      "ra": 116.5798,
+      "dec": -44.2909
     },
     {
-      "id": "field-02",
-      "name": "Random SDSS field",
-      "ra": 139.69094,
-      "dec": 23.52567
+      "id": "sky-02",
+      "name": "Random SPHEREx sky position",
+      "ra": 234.33641,
+      "dec": -58.77382
     },
     {
-      "id": "field-03",
-      "name": "Random SDSS field",
-      "ra": 137.44612,
-      "dec": 11.91062
+      "id": "sky-03",
+      "name": "Random SPHEREx sky position",
+      "ra": 192.91752,
+      "dec": -15.58229
     },
     {
-      "id": "field-04",
-      "name": "Random SDSS field",
-      "ra": 139.41769,
-      "dec": 53.72631
+      "id": "sky-04",
+      "name": "Random SPHEREx sky position",
+      "ra": 20.87961,
+      "dec": 0.8521
     },
     {
-      "id": "field-05",
-      "name": "Random SDSS field",
-      "ra": 158.66572,
-      "dec": 35.67973
+      "id": "sky-05",
+      "name": "Random SPHEREx sky position",
+      "ra": 13.49844,
+      "dec": -7.62614
     },
     {
-      "id": "field-06",
-      "name": "Random SDSS field",
-      "ra": 239.89183,
-      "dec": 58.28811
+      "id": "sky-06",
+      "name": "Random SPHEREx sky position",
+      "ra": 25.14795,
+      "dec": -54.9423
     },
     {
-      "id": "field-07",
-      "name": "Random SDSS field",
-      "ra": 135.35422,
-      "dec": 6.41685
+      "id": "sky-07",
+      "name": "Random SPHEREx sky position",
+      "ra": 152.82691,
+      "dec": 40.82147
     },
     {
-      "id": "field-08",
-      "name": "Random SDSS field",
-      "ra": 196.33148,
-      "dec": 6.51102
+      "id": "sky-08",
+      "name": "Random SPHEREx sky position",
+      "ra": 44.56871,
+      "dec": -33.60898
     },
     {
-      "id": "field-09",
-      "name": "Random SDSS field",
-      "ra": 142.41443,
-      "dec": 12.11295
+      "id": "sky-09",
+      "name": "Random SPHEREx sky position",
+      "ra": 225.87596,
+      "dec": 63.56216
     },
     {
-      "id": "field-10",
-      "name": "Random SDSS field",
-      "ra": 161.41155,
-      "dec": 18.39637
+      "id": "sky-10",
+      "name": "Random SPHEREx sky position",
+      "ra": 207.75706,
+      "dec": -11.92546
     },
     {
-      "id": "field-11",
-      "name": "Random SDSS field",
-      "ra": 190.68459,
-      "dec": 30.16074
+      "id": "sky-11",
+      "name": "Random SPHEREx sky position",
+      "ra": 351.45184,
+      "dec": -65.07152
     },
     {
-      "id": "field-12",
-      "name": "Random SDSS field",
-      "ra": 337.21485,
-      "dec": -0.46083
+      "id": "sky-12",
+      "name": "Random SPHEREx sky position",
+      "ra": 309.04865,
+      "dec": -24.88393
     },
     {
-      "id": "field-13",
-      "name": "Random SDSS field",
-      "ra": 192.7775,
-      "dec": 11.08892
+      "id": "sky-13",
+      "name": "Random SPHEREx sky position",
+      "ra": 51.93183,
+      "dec": -49.85502
     },
     {
-      "id": "field-14",
-      "name": "Random SDSS field",
-      "ra": 42.29534,
-      "dec": -0.70958
+      "id": "sky-14",
+      "name": "Random SPHEREx sky position",
+      "ra": 111.05346,
+      "dec": 39.21652
     },
     {
-      "id": "field-15",
-      "name": "Random SDSS field",
-      "ra": 138.47734,
-      "dec": 33.77009
+      "id": "sky-15",
+      "name": "Random SPHEREx sky position",
+      "ra": 65.0615,
+      "dec": 9.3927
     },
     {
-      "id": "field-16",
-      "name": "Random SDSS field",
-      "ra": 129.70525,
-      "dec": 25.02211
+      "id": "sky-16",
+      "name": "Random SPHEREx sky position",
+      "ra": 230.00885,
+      "dec": -14.78573
     },
     {
-      "id": "field-17",
-      "name": "Random SDSS field",
-      "ra": 320.12219,
-      "dec": 0.40918
+      "id": "sky-17",
+      "name": "Random SPHEREx sky position",
+      "ra": 197.18801,
+      "dec": -60.97665
     },
     {
-      "id": "field-18",
-      "name": "Random SDSS field",
-      "ra": 335.94082,
-      "dec": 0.6881
+      "id": "sky-18",
+      "name": "Random SPHEREx sky position",
+      "ra": 21.45642,
+      "dec": -36.02106
     },
     {
-      "id": "field-19",
-      "name": "Random SDSS field",
-      "ra": 356.93324,
-      "dec": -0.01665
+      "id": "sky-19",
+      "name": "Random SPHEREx sky position",
+      "ra": 244.94399,
+      "dec": -8.32659
     },
     {
-      "id": "field-20",
-      "name": "Random SDSS field",
-      "ra": 132.82831,
-      "dec": -0.50586
+      "id": "sky-20",
+      "name": "Random SPHEREx sky position",
+      "ra": 113.09298,
+      "dec": 9.85316
     },
     {
-      "id": "field-21",
-      "name": "Random SDSS field",
-      "ra": 191.52246,
-      "dec": 6.62542
+      "id": "sky-21",
+      "name": "Random SPHEREx sky position",
+      "ra": 163.14638,
+      "dec": -23.60731
     },
     {
-      "id": "field-22",
-      "name": "Random SDSS field",
-      "ra": 228.82462,
-      "dec": 46.51381
+      "id": "sky-22",
+      "name": "Random SPHEREx sky position",
+      "ra": 285.97661,
+      "dec": 23.45251
     },
     {
-      "id": "field-23",
-      "name": "Random SDSS field",
-      "ra": 310.63105,
-      "dec": 0.97872
+      "id": "sky-23",
+      "name": "Random SPHEREx sky position",
+      "ra": 87.87474,
+      "dec": 8.56014
     },
     {
-      "id": "field-24",
-      "name": "Random SDSS field",
-      "ra": 181.75844,
-      "dec": 46.44364
+      "id": "sky-24",
+      "name": "Random SPHEREx sky position",
+      "ra": 189.07074,
+      "dec": 48.6142
     },
     {
-      "id": "field-25",
-      "name": "Random SDSS field",
-      "ra": 167.80172,
-      "dec": 2.3639
+      "id": "sky-25",
+      "name": "Random SPHEREx sky position",
+      "ra": 262.6003,
+      "dec": -25.09526
     },
     {
-      "id": "field-26",
-      "name": "Random SDSS field",
-      "ra": 211.9909,
-      "dec": 15.72928
+      "id": "sky-26",
+      "name": "Random SPHEREx sky position",
+      "ra": 352.86295,
+      "dec": -49.80643
     },
     {
-      "id": "field-27",
-      "name": "Random SDSS field",
-      "ra": 160.77002,
-      "dec": 48.88399
+      "id": "sky-27",
+      "name": "Random SPHEREx sky position",
+      "ra": 150.52422,
+      "dec": 30.94947
     },
     {
-      "id": "field-28",
-      "name": "Random SDSS field",
-      "ra": 246.87882,
-      "dec": 20.11549
+      "id": "sky-28",
+      "name": "Random SPHEREx sky position",
+      "ra": 54.71443,
+      "dec": -1.26484
     },
     {
-      "id": "field-29",
-      "name": "Random SDSS field",
-      "ra": 36.35699,
-      "dec": 0.79724
+      "id": "sky-29",
+      "name": "Random SPHEREx sky position",
+      "ra": 14.11461,
+      "dec": 19.65962
     },
     {
-      "id": "field-30",
-      "name": "Random SDSS field",
-      "ra": 131.90479,
-      "dec": 4.27682
+      "id": "sky-30",
+      "name": "Random SPHEREx sky position",
+      "ra": 275.24551,
+      "dec": 8.3982
     },
     {
-      "id": "field-31",
-      "name": "Random SDSS field",
-      "ra": 192.27673,
-      "dec": -4.50034
+      "id": "sky-31",
+      "name": "Random SPHEREx sky position",
+      "ra": 315.17201,
+      "dec": -21.87019
     },
     {
-      "id": "field-32",
-      "name": "Random SDSS field",
-      "ra": 27.03435,
-      "dec": -0.156
+      "id": "sky-32",
+      "name": "Random SPHEREx sky position",
+      "ra": 250.30633,
+      "dec": 10.87925
     },
     {
-      "id": "field-33",
-      "name": "Random SDSS field",
-      "ra": 181.94521,
-      "dec": 27.8765
+      "id": "sky-33",
+      "name": "Random SPHEREx sky position",
+      "ra": 208.76227,
+      "dec": -5.02494
     },
     {
-      "id": "field-34",
-      "name": "Random SDSS field",
-      "ra": 235.4313,
-      "dec": 48.3122
+      "id": "sky-34",
+      "name": "Random SPHEREx sky position",
+      "ra": 302.3884,
+      "dec": 62.79321
     },
     {
-      "id": "field-35",
-      "name": "Random SDSS field",
-      "ra": 143.75608,
-      "dec": 49.57233
+      "id": "sky-35",
+      "name": "Random SPHEREx sky position",
+      "ra": 170.6754,
+      "dec": 19.16589
     },
     {
-      "id": "field-36",
-      "name": "Random SDSS field",
-      "ra": 253.64847,
-      "dec": 39.66784
+      "id": "sky-36",
+      "name": "Random SPHEREx sky position",
+      "ra": 21.84099,
+      "dec": 23.76486
     },
     {
-      "id": "field-37",
-      "name": "Random SDSS field",
-      "ra": 184.35865,
-      "dec": 43.44708
+      "id": "sky-37",
+      "name": "Random SPHEREx sky position",
+      "ra": 232.96639,
+      "dec": 80.46752
     },
     {
-      "id": "field-38",
-      "name": "Random SDSS field",
-      "ra": 249.51924,
-      "dec": 41.79752
+      "id": "sky-38",
+      "name": "Random SPHEREx sky position",
+      "ra": 295.89292,
+      "dec": -25.51891
     },
     {
-      "id": "field-39",
-      "name": "Random SDSS field",
-      "ra": 255.91029,
-      "dec": 25.66502
+      "id": "sky-39",
+      "name": "Random SPHEREx sky position",
+      "ra": 138.88492,
+      "dec": 19.71279
     },
     {
-      "id": "field-40",
-      "name": "Random SDSS field",
-      "ra": 149.33857,
-      "dec": -0.64491
-    },
-    {
-      "id": "field-41",
-      "name": "Random SDSS field",
-      "ra": 19.86467,
-      "dec": 0.5929
-    },
-    {
-      "id": "field-42",
-      "name": "Random SDSS field",
-      "ra": 249.04231,
-      "dec": 1.05791
-    },
-    {
-      "id": "field-43",
-      "name": "Random SDSS field",
-      "ra": 119.6903,
-      "dec": 13.8391
-    },
-    {
-      "id": "field-44",
-      "name": "Random SDSS field",
-      "ra": 336.66825,
-      "dec": -0.30489
-    },
-    {
-      "id": "field-45",
-      "name": "Random SDSS field",
-      "ra": 169.48758,
-      "dec": 18.54759
-    },
-    {
-      "id": "field-46",
-      "name": "Random SDSS field",
-      "ra": 350.93305,
-      "dec": 0.0437
-    },
-    {
-      "id": "field-47",
-      "name": "Random SDSS field",
-      "ra": 150.98118,
-      "dec": 20.14221
-    },
-    {
-      "id": "field-48",
-      "name": "Random SDSS field",
-      "ra": 194.75738,
-      "dec": 18.20681
-    },
-    {
-      "id": "field-49",
-      "name": "Random SDSS field",
-      "ra": 142.33411,
-      "dec": 4.24899
-    },
-    {
-      "id": "field-50",
-      "name": "Random SDSS field",
-      "ra": 214.14829,
-      "dec": 33.80685
+      "id": "sky-40",
+      "name": "Random SPHEREx sky position",
+      "ra": 8.12265,
+      "dec": -4.3937
     }
   ]
 }
