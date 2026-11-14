@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import health, objects, surveys, targets
+from .api import constellations, health, objects, surveys, targets
 from .api.deps import Services
 from .config import Settings, get_settings
 from .models.errors import AppError
@@ -113,7 +113,7 @@ def create_app(settings: Settings | None = None, targets_file: Path = DEFAULT_DA
         log.exception("unhandled error on %s", request.url.path, exc_info=exc)
         return _error_response("internal_error", "An unexpected error occurred.", 500)
 
-    for router in (health.router, surveys.router, objects.router, targets.router):
+    for router in (health.router, surveys.router, objects.router, targets.router, constellations.router):
         app.include_router(router, prefix="/api")
 
     return app

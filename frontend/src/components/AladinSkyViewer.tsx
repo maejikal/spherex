@@ -1,3 +1,5 @@
+import { ConstellationOverview } from './ConstellationOverview.tsx';
+import { ConstellationCard, type ConstellationCardProps } from './ConstellationCard.tsx';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AlertCircle, Copy, LoaderCircle, MousePointer2, Move, RotateCcw, Search, X } from 'lucide-react';
 import type { ExplorerView } from '../api/types.ts';
@@ -23,6 +25,7 @@ interface AladinSkyViewerProps {
   onRetrySurvey: () => void;
   selection: SkyCoordinates | null;
   analysisRequested: boolean;
+  constellation: ConstellationCardProps;
   crosshair: boolean;
   onDimensions: (dimensions: { width: number; height: number }) => void;
   /** Pan/zoom made by the user inside Aladin, reported after it settles. */
@@ -39,7 +42,7 @@ interface AladinSkyViewerProps {
 const MAX_FOV_DEGREES = 360;
 
 export function AladinSkyViewer({
-  view, survey, surveyPending, surveyError, onRetrySurvey, selection, analysisRequested, crosshair,
+  view, survey, surveyPending, surveyError, onRetrySurvey, selection, analysisRequested, constellation, crosshair,
   onDimensions, onUserView, onSelect, onCenter, onAnalyze, onCopySelection, onClearSelection, onKeyPan, onStatus,
 }: AladinSkyViewerProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -203,9 +206,14 @@ export function AladinSkyViewer({
     controllerRef.current?.setSelection(selRa === undefined || selDec === undefined ? null : { ra: selRa, dec: selDec });
   }, [ready, selRa, selDec]);
 
+  const boundary = selection && constellation.boundaryEnabled ? constellation.lookup.data?.boundary : null;
+  useEffect(() => {
+    if (ready) controllerRef.current?.setConstellationBoundary(boundary ?? null);
+  }, [ready, boundary]);
+
   useLayoutEffect(() => {
     updateActionTrayPosition();
-  }, [updateActionTrayPosition, selection?.ra, selection?.dec, view?.ra, view?.dec, view?.scale, size.width, size.height, ready, status.loading, status.tileError]);
+  }, [updateActionTrayPosition, selection?.ra, selection?.dec, view?.ra, view?.dec, view?.scale, size.width, size.height, ready, status.loading, status.tileError, constellation.lookup.status, constellation.lookup.data]);
 
   useEffect(() => {
     onStatus(status);
@@ -256,6 +264,7 @@ export function AladinSkyViewer({
               <span>SELECTED POSITION</span>
               <strong>{formatCoordinate(selection.ra, 5)}° · {selection.dec >= 0 ? '+' : ''}{formatCoordinate(selection.dec, 5)}°</strong>
             </div>
+            <ConstellationCard {...constellation} compact />
             <button className="button button--primary button--compact" type="button" onClick={onAnalyze} title="Search SIMBAD around this position">
               <Search aria-hidden="true" size={14} />{analysisRequested ? 'View analysis' : 'Analyze area'}
             </button>
@@ -319,6 +328,9 @@ export function AladinSkyViewer({
           </div>
         )}
       </div>
+      {selection && constellation.boundaryEnabled && constellation.lookup.isSuccess && (
+        <ConstellationOverview constellation={constellation.lookup.data} />
+      )}
       <div className="viewer-instructions" aria-hidden="true">
         <span><Move size={13} /> Drag or use arrow keys to pan</span>
         <span><span aria-hidden="true">↕</span> Wheel to zoom</span>

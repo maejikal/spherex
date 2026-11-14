@@ -87,3 +87,14 @@ class MatchOut(BaseModel):
 
 class NearbyResponse(BaseModel):
     matches: list[MatchOut]
+
+
+class ConstellationResponse(BaseModel):
+    ra: float
+    dec: float
+    name: str
+    abbreviation: str
+    coordinate_system: str = 'ICRS'
+    learn_url: str
+    boundary_source: str
+    boundary: list[list[tuple[float, float]]]

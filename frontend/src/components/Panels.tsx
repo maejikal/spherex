@@ -1,3 +1,4 @@
+import { ConstellationCard, type ConstellationCardProps } from './ConstellationCard.tsx';
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -293,6 +294,7 @@ export function ViewPanel({
 }
 
 interface InspectPanelProps {
+  constellation: ConstellationCardProps;
   selection: (SkyCoordinates & { accuracy: 'projection' }) | null;
   view: ExplorerView | null;
   survey: SphereXSurveyInfo | undefined;
@@ -300,7 +302,7 @@ interface InspectPanelProps {
   analysisEnabled: boolean;
 }
 
-export function InspectPanel({ selection, view, survey, loading, analysisEnabled }: InspectPanelProps) {
+export function InspectPanel({ constellation, selection, view, survey, loading, analysisEnabled }: InspectPanelProps) {
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const nearby = useQuery({
     queryKey: ['objects', 'nearby', selection?.ra, selection?.dec],
@@ -340,6 +342,11 @@ export function InspectPanel({ selection, view, survey, loading, analysisEnabled
           <div className="callout"><Info aria-hidden="true" size={17} /><div><strong>No point selected</strong><p>Single-click to select; double-click to center the position.</p></div></div>
         )}
       </section>
+
+      {selection && <section className="panel-section" aria-label="Selected constellation">
+        <div className="section-heading"><h3>Constellation</h3></div>
+        <ConstellationCard {...constellation} />
+      </section>}
 
       <section className="panel-section catalogue-results" aria-labelledby="catalogue-heading">
         <div className="section-heading">

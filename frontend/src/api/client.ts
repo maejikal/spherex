@@ -1,3 +1,4 @@
+import { parseConstellation, type ConstellationInfo } from '../sky/constellations.ts';
 import type { ApiHealth, CatalogObject, ResolvedObject, SkyTarget } from './types.ts';
 import type { SkyCoordinates } from '../sky/coordinates.ts';
 
@@ -170,4 +171,10 @@ function firstString(...values: unknown[]): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Local Astropy lookup; query cancellation prevents an old selection replacing the new one. */
+export async function getConstellation(coordinates: SkyCoordinates, signal?: AbortSignal): Promise<ConstellationInfo> {
+  const query = new URLSearchParams({ ra: String(coordinates.ra), dec: String(coordinates.dec) });
+  return parseConstellation(await fetchJson(`/api/constellations/at?${query}`, signal));
 }

@@ -6,6 +6,10 @@ declare module 'aladin-lite' {
     getFrequency(): number;
     readonly isSpectralCube?: boolean;
   }
+  export interface AladinGraphicOverlay {
+    removeAll(): void;
+    addFootprints(shapes: unknown[]): void;
+  }
   export interface AladinCatalog {
     addSources(sources: unknown[]): void;
     removeAll(): void;
@@ -33,6 +37,7 @@ declare module 'aladin-lite' {
     showCooGrid(show: boolean): void;
     setCooGrid(options: Record<string, unknown>): void;
     addCatalog(catalog: AladinCatalog): void;
+    addOverlay(overlay: AladinGraphicOverlay): void;
     removeLayers?(): void;
     on(event: string, callback: (payload: never) => void): void;
     setBackgroundColor?(color: string): void;
@@ -45,6 +50,8 @@ declare module 'aladin-lite' {
       url: string,
       options?: { name?: string; successCallback?: (hips: AladinHiPS) => void; errorCallback?: (error: unknown) => void },
     ): AladinHiPS;
+    graphicOverlay(options?: Record<string, unknown>): AladinGraphicOverlay;
+    polyline(points: [number, number][], options?: Record<string, unknown>): unknown;
     catalog(options?: Record<string, unknown>): AladinCatalog;
     source(ra: number, dec: number, data?: Record<string, unknown>): unknown;
   }

@@ -120,3 +120,68 @@
   .workspace--compact .workspace-announcement { top: 8px; bottom: auto; max-height: 72px; overflow: auto; }
   .app-footer { font-size: 10px; }
 }
+
+/* Constellation context stays with the selected sky position, even with Inspect closed. */
+.constellation-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.constellation-card p { margin: 0; }
+.constellation-card a { color: var(--accent); text-underline-offset: 3px; }
+.constellation-card a:hover { text-decoration: underline; }
+.constellation-card a:focus-visible,
+.constellation-card summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.constellation-card__identity { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.constellation-card__identity p { min-width: 0; overflow-wrap: anywhere; font-size: 15px; font-weight: 600; color: var(--text); }
+.constellation-card__article { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding-block: 4px; font-size: 11px; text-decoration: none; }
+.constellation-card__toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; cursor: pointer; color: var(--text); }
+.constellation-card__toggle input { width: 16px; height: 16px; flex-shrink: 0; margin: 0; accent-color: var(--accent); }
+.constellation-card__details { color: var(--text-muted); font-size: 10px; }
+.constellation-card__details summary { width: fit-content; padding-block: 4px; cursor: pointer; }
+.constellation-card__explanation { display: grid; gap: 8px; padding-top: 8px; overflow-wrap: anywhere; }
+.constellation-card__explanation a { text-decoration: underline; }
+.viewer-analysis-actions > .constellation-card { grid-column: 1 / -1; grid-row: 2; }
+.constellation-card--compact { gap: 4px; }
+.constellation-card--compact .constellation-card__identity p { font-size: 12px; }
+@media (max-width: 760px) {
+  .constellation-card__toggle { min-height: 44px; }
+  .workspace--compact .constellation-card__toggle input { min-height: 16px; }
+  .constellation-card__details summary { min-height: 32px; }
+}
+
+/* Independent overview: fits celestial geometry, never resizes or navigates Aladin. */
+.constellation-overview {
+  position: absolute;
+  z-index: 3;
+  left: 16px;
+  bottom: 72px;
+  width: 240px;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 88px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+.constellation-overview__heading { display: grid; gap: 4px; padding: 12px 12px 0; }
+.constellation-overview__heading > span { color: var(--text-muted); font-size: 10px; }
+.constellation-overview__heading strong { font-size: 13px; overflow-wrap: anywhere; }
+.constellation-overview__chart { display: block; width: 100%; height: auto; }
+.constellation-overview__boundary { fill: none; stroke: #f0cb85; stroke-width: 1.5; stroke-linejoin: round; }
+.constellation-overview__marker { fill: var(--accent); stroke: var(--accent); stroke-width: 1.5; }
+.constellation-overview__marker circle { stroke: var(--surface); }
+.constellation-overview__orientation { fill: var(--text-muted); font-size: 9px; }
+.constellation-overview__legend { display: flex; align-items: center; gap: 4px; padding: 0 12px 12px; color: var(--text-muted); font-size: 10px; }
+.constellation-overview__legend > span:first-child { color: var(--accent); }
+.constellation-overview__legend > span:last-child { margin-left: auto; font-size: 9px; }
+.constellation-overview > p { padding: 12px; font-size: 11px; }
+@media (max-width: 760px) {
+  .constellation-overview { left: auto; right: 8px; top: 64px; bottom: auto; width: 168px; max-height: calc(100% - 80px); }
+  .constellation-overview__heading { padding: 8px 8px 0; gap: 2px; }
+  .constellation-overview__heading strong { font-size: 12px; }
+  .constellation-overview__legend { padding: 0 8px 8px; font-size: 9px; }
+}

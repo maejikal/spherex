@@ -70,3 +70,19 @@ test('native double-click recenters exact clicked sky position despite stale emi
     else globalThis.window = originalWindow;
   }
 });
+
+test('constellation overlay replaces geometry, clears stale outlines and never moves view', () => {
+  const layers = [];
+  const overlay = { shapes: [], removeAll() { this.shapes = []; }, addFootprints(shapes) { this.shapes.push(...shapes); } };
+  const A = { graphicOverlay: () => overlay, polyline: (points, options) => ({ points, options }) };
+  const controller = new AladinController(A, { addOverlay: (layer) => layers.push(layer) }, { initial: { frame: 1 } });
+  const ring = [[359, 0], [0, 0], [0, 1], [359, 0]];
+  controller.setConstellationBoundary([ring]);
+  assert.equal(layers.length, 1);
+  assert.deepEqual(overlay.shapes[0].points, ring);
+  controller.setConstellationBoundary([ring, ring]);
+  assert.equal(layers.length, 1);
+  assert.equal(overlay.shapes.length, 2);
+  controller.setConstellationBoundary(null);
+  assert.equal(overlay.shapes.length, 0);
+});

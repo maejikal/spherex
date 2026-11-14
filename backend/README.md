@@ -70,3 +70,14 @@ Verification shows tiles with signal exist, not that an object is detected; a co
 * In-memory caches (survey info, name resolution, catalogue) and the "no immediate repeat" random pick are per process, not shared between workers.
 * SIMBAD object types are SIMBAD's descriptions; matches are catalogue records, never labelled as SPHEREx detections.
 * `object_type` from Sesame is SIMBAD's short code (e.g. `AGN`, `BY*`), returned as-is.
+
+
+## Local constellation lookup
+
+`GET /api/constellations/at?ra=83.822&dec=-5.391` returns selected ICRS coordinates, constellation name/abbreviation,
+Wikipedia URL, source attribution and closed ICRS boundary rings. RA must be finite in `[0, 360)`, Dec in `[-90, 90]`;
+invalid input returns the normal 422 JSON error. Astropy is installed by `requirements.txt`; no remote service, key,
+or environment setting is involved. Membership: Roman (1987) via Astropy. Boundaries: bundled CDS VI/49 B1875 vertices,
+sampled before transformation; see the root README for provenance, polar seams, and display precision limitations.
+
+Focused tests: `../.venv/bin/python -m pytest tests/test_constellations.py -q` (from `backend`).

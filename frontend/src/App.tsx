@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Compass, Eye, Search, Share2, SlidersHorizontal, Telescope } from 'lucide-react';
-import { getApiHealth } from './api/client.ts';
+import { getApiHealth, getConstellation } from './api/client.ts';
 import type { ExplorerView } from './api/types.ts';
 import { AladinSkyViewer, type ViewerStatus } from './components/AladinSkyViewer.tsx';
 import { InspectPanel, FindPanel, ViewPanel } from './components/Panels.tsx';
@@ -46,6 +46,14 @@ export default function App() {
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [shareFallback, setShareFallback] = useState<string | null>(null);
   const [analysisRequested, setAnalysisRequested] = useState(false);
+  const [constellationBoundary, setConstellationBoundary] = useState(false);
+  const constellation = useQuery({
+    queryKey: ['constellation', selection?.ra, selection?.dec],
+    queryFn: ({ signal }) => getConstellation(selection!, signal),
+    enabled: Boolean(selection),
+    staleTime: Infinity,
+    retry: false,
+  });
   // A new session opens only Find. Nothing below reopens View or Inspect except the user (toolbar, or clicking the sky).
   const [panels, setPanels] = useState<PanelVisibility>(initialPanels);
   const [windowOrder, setWindowOrder] = useState<PanelId[]>(['find', 'view', 'inspect']);
@@ -337,6 +345,7 @@ export default function App() {
           surveyError={survey.error}
           onRetrySurvey={() => void survey.refetch()}
           selection={selection}
+          constellation={{ lookup: constellation, boundaryEnabled: constellationBoundary, onBoundaryChange: setConstellationBoundary }}
           analysisRequested={analysisRequested}
           crosshair={crosshair}
           onDimensions={updateDimensions}
@@ -407,7 +416,7 @@ export default function App() {
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, inspect: false }))}
         >
-          <InspectPanel selection={selection} view={view} survey={survey.data} loading={viewerStatus.loading} analysisEnabled={analysisRequested} />
+          <InspectPanel constellation={{ lookup: constellation, boundaryEnabled: constellationBoundary, onBoundaryChange: setConstellationBoundary }} selection={selection} view={view} survey={survey.data} loading={viewerStatus.loading} analysisEnabled={analysisRequested} />
         </ToolWindow>
 
         {announcement && <p className="workspace-announcement" role="status" aria-live="polite">{announcement}</p>}

@@ -1,4 +1,4 @@
-import type { AladinCatalog, AladinHiPS, AladinInstance } from 'aladin-lite';
+import type { AladinCatalog, AladinGraphicOverlay, AladinHiPS, AladinInstance } from 'aladin-lite';
 import { frequencyForFrame } from '../spherex/channels.ts';
 import type { SphereXSurveyInfo } from '../spherex/properties.ts';
 import { normalizeRightAscension } from '../coordinates.ts';
@@ -51,6 +51,7 @@ export class AladinController {
   private readonly options: AladinControllerOptions;
   private hips: AladinHiPS | null = null;
   private marker: AladinCatalog | null = null;
+  private constellationOverlay: AladinGraphicOverlay | null = null;
   private frame: number;
   private destroyed = false;
   private programmaticUntil = 0;
@@ -271,6 +272,17 @@ export class AladinController {
     if (!this.marker) return;
     this.marker.removeAll();
     if (position) this.marker.addSources([this.A.source(position.ra, position.dec, {})]);
+  }
+
+  /** Geometry is already sampled in ICRS. Aladin handles spherical projection and RA wrap. */
+  setConstellationBoundary(rings: [number, number][][] | null): void {
+    if (this.destroyed) return;
+    if (!this.constellationOverlay && rings) {
+      this.constellationOverlay = this.A.graphicOverlay({ name: 'Selected constellation boundary', color: '#f0cb85', lineWidth: 2 });
+      this.aladin.addOverlay(this.constellationOverlay);
+    }
+    this.constellationOverlay?.removeAll();
+    if (rings) this.constellationOverlay?.addFootprints(rings.map((ring) => this.A.polyline(ring)));
   }
 
   resize(): void {

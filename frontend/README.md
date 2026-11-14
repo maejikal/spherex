@@ -97,3 +97,27 @@ cache; switching to another channel and back re-used the first channel's cached 
 - Requires WebGL. The viewer shows an explanatory error if Aladin cannot start.
 - Zoom beyond the HiPS pixel scale (~12.9"/px) magnifies pixels; scale is limited to 0.2-500 arcsec/px.
 - The Aladin library is ~2.4 MB (840 kB gzip), lazy-loaded on first view.
+
+
+## Selected constellation
+
+App owns one React Query lookup keyed by selected RA/Dec and an independent session-only boundary preference. It passes the result to
+`ConstellationCard` in both the selected-position tray and Inspect, without enabling SIMBAD analysis. The API client validates ICRS
+rings and link origins. `AladinController.setConstellationBoundary` owns one reusable graphics layer; new selection, failure, clearing,
+or disabling the toggle removes old geometry. Aladin projects the sampled coordinates; no DOM pixel tracing or separate renderer.
+Wikipedia links are external and explicitly labelled. Name, loading, failure/retry and checkbox remain keyboard-accessible.
+
+Manual check: select Orion, enable the outline, zoom out; verify a gold region boundary (not star connections). Select Andromeda and
+confirm no Orion outline remains, then clear selection. Inspect and tray checkboxes stay in sync. Change spectral channel and layout;
+selection/outline persist. With backend stopped, a new selection shows retry instead of the previous name or boundary. Test at 390px.
+
+### Constellation overview window
+
+Enabling **Official boundary outline** also shows a small read-only overview in the lower-left of the viewer. It fits the complete selected
+constellation and marks the lookup position with a cyan dot/cross, independently of the main camera's center/zoom. Disabling the toggle,
+clearing selection, or a pending/failed new lookup hides the window instead of retaining stale geometry. The window is smaller on mobile.
+
+`src/sky/constellationOverview.ts` projects the existing sampled ICRS rings using spherical azimuthal equidistant coordinates centered on
+the mean boundary unit vector, then uniformly fits them into an SVG viewBox. RA wrap, polar regions and disconnected Serpens rings are
+handled without planar RA/Dec bounding boxes. North up/east left describes orientation at chart center; projection distorts shapes away
+from center. This is a context map, not WCS or a measured field of view. No invented stars, figure connections or new dependencies.
