@@ -92,6 +92,17 @@ cache; switching to another channel and back re-used the first channel's cached 
   lifetime, shown as a transient notice, and expire after 15 s.
 - Aladin starts with `survey: []` and `log: false`, so it contacts no CDS services.
 
+## Blink viewer
+
+Choosing **Analyze area** keeps its existing behaviour (Inspect window + SIMBAD search) and also opens the **Blink viewer**, a floating
+window placed bottom-aligned immediately left of Inspect. It requests `/api/blink/cutouts` for the position captured at that click, so
+panning the sky or selecting elsewhere never replaces an open analysis; a newer Analyze simply changes the query key.
+Both aligned PNGs are loaded and decoded before playback is allowed; frames are stacked and toggled with `visibility`, so a switch is
+instantaneous with no layout change. Controls: Play/Pause, 0.25 / 0.5 / 1 / 2 s per frame, previous/next, direct frame buttons (these pause),
+1x/2x/4x zoom (pixel-preserving when zoomed), keyboard (Space, arrow keys). Pure logic lives in `src/sky/blink/` (`response.ts`, `playback.ts`,
+`errors.ts`) with tests in `tests/blink.test.mjs`. On a phone-sized screen only one sheet fits, so the Blink viewer takes it and Inspect is one tap away.
+The prototype covers only the sky around RA 210.54, Dec +54.46; elsewhere the viewer says so and offers a "Go to covered region" button.
+
 ## Known limitations
 
 - Requires WebGL. The viewer shows an explanatory error if Aladin cannot start.

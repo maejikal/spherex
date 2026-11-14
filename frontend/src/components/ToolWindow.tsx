@@ -12,7 +12,7 @@ interface ToolWindowProps {
   placement: Placement;
   /** Docked panels and mobile sheets retain content and floating position, but cannot be moved. */
   movable?: boolean;
-  /** For `placement="beside"`: id of the window to sit next to on first open. */
+  /** For `placement="beside"` / `"left-of"`: id of the window to sit next to on first open. */
   anchorId?: string;
   /** Stacking value from the app's window order; a pointer-down on the window raises it. */
   zIndex?: number;

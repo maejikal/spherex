@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import constellations, health, objects, surveys, targets
+from .api import blink, constellations, health, objects, surveys, targets
 from .api.deps import Services
 from .config import Settings, get_settings
 from .models.errors import AppError
@@ -22,6 +22,7 @@ from .providers.http import UpstreamClient
 from .providers.sesame import SesameResolver
 from .providers.simbad import SimbadCatalogue
 from .providers.spherex import SphereXHiPSProvider
+from .services.blink_service import BlinkService
 from .services.catalogue_search import CatalogueSearchService
 from .services.object_resolver import ObjectResolverService
 from .services.target_service import DEFAULT_DATA_FILE, TargetService
@@ -58,6 +59,7 @@ def build_services(settings: Settings, targets_file: Path = DEFAULT_DATA_FILE) -
         resolver=ObjectResolverService(sesame, settings),
         catalogue=CatalogueSearchService(SimbadCatalogue(upstream("SIMBAD"), settings), settings),
         targets=TargetService(targets_file),
+        blink=BlinkService(settings),
     )
 
 
@@ -113,7 +115,7 @@ def create_app(settings: Settings | None = None, targets_file: Path = DEFAULT_DA
         log.exception("unhandled error on %s", request.url.path, exc_info=exc)
         return _error_response("internal_error", "An unexpected error occurred.", 500)
 
-    for router in (health.router, surveys.router, objects.router, targets.router, constellations.router):
+    for router in (health.router, surveys.router, objects.router, targets.router, constellations.router, blink.router):
         app.include_router(router, prefix="/api")
 
     return app

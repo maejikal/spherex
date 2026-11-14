@@ -201,6 +201,10 @@ cython_debug/
 .cursorindexingignore
 
 # Backend
+# Large SPHEREx FITS inputs live outside the repository; never commit them.
+*.fits
+*.fits.gz
+*.fz
 .venv/
 backend/.env
 backend/.cache/

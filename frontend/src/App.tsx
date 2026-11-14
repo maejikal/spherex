@@ -5,6 +5,7 @@ import { Activity, Compass, Eye, Search, Share2, SlidersHorizontal, Telescope } 
 import { getApiHealth, getConstellation } from './api/client.ts';
 import type { ExplorerView } from './api/types.ts';
 import { AladinSkyViewer, type ViewerStatus } from './components/AladinSkyViewer.tsx';
+import { BlinkViewer } from './components/BlinkViewer.tsx';
 import { InspectPanel, FindPanel, ViewPanel } from './components/Panels.tsx';
 import { ToolWindow } from './components/ToolWindow.tsx';
 import {
@@ -18,8 +19,8 @@ import { defaultFrame } from './sky/spherex/channels.ts';
 import { SPHEREX_HIPS_URL, SPHEREX_SURVEY_ID } from './sky/spherex/config.ts';
 import { fetchSurveyInfo } from './sky/spherex/properties.ts';
 import { parseViewSearch, serializeViewSearch } from './state/urlView.ts';
-import { initialPanels, raise, togglePanel as toggleVisibility, zIndexFor } from './state/windows.ts';
-import type { PanelId, PanelVisibility } from './state/windows.ts';
+import { initialPanels, orderForAnalysis, panelsForAnalysis, raise, togglePanel as toggleVisibility, zIndexFor } from './state/windows.ts';
+import type { PanelId, PanelVisibility, WindowId } from './state/windows.ts';
 import { useExplorerStore } from './state/explorerStore.ts';
 import { sameSkyView } from './state/viewEquality.ts';
 
@@ -56,14 +57,19 @@ export default function App() {
   });
   // A new session opens only Find. Nothing below reopens View or Inspect except the user (toolbar, or clicking the sky).
   const [panels, setPanels] = useState<PanelVisibility>(initialPanels);
-  const [windowOrder, setWindowOrder] = useState<PanelId[]>(['find', 'view', 'inspect']);
-  const bringToFront = useCallback((id: PanelId) => setWindowOrder((order) => raise(order, id)), []);
+  const [windowOrder, setWindowOrder] = useState<WindowId[]>(['find', 'view', 'inspect', 'blink']);
+  const bringToFront = useCallback((id: WindowId) => setWindowOrder((order) => raise(order, id)), []);
+  // The Blink Viewer is opened only by Analyze area. Its position is captured at that click, so neither a
+  // later selection nor moving the sky viewer changes (or re-requests) an analysis that is already open.
+  const [blinkOpen, setBlinkOpen] = useState(false);
+  const [blinkTarget, setBlinkTarget] = useState<SkyCoordinates | null>(null);
 
   useEffect(() => {
     const narrowViewport = window.matchMedia('(max-width: 760px)');
     const keepOnePanelOpen = () => {
       setCompact(narrowViewport.matches);
       if (!narrowViewport.matches) return;
+      setBlinkOpen(false);
       setPanels((current) => {
         const openPanels = (['find', 'view', 'inspect'] as const).filter((panel) => current[panel]);
         if (openPanels.length < 2) return current;
@@ -233,14 +239,13 @@ export default function App() {
   const analyzeSelection = useCallback(() => {
     const selected = useExplorerStore.getState().selection;
     if (!selected) return;
+    // Existing behaviour: SIMBAD analysis in the Inspect window. New: the Blink Viewer opens alongside it.
     setAnalysisRequested(true);
-    setPanels((current) => {
-      if (window.matchMedia('(max-width: 760px)').matches) {
-        return { find: false, view: false, inspect: true };
-      }
-      return { ...current, inspect: true };
-    });
-    setWindowOrder((order) => raise(order, 'inspect'));
+    setBlinkTarget({ ra: selected.ra, dec: selected.dec });
+    const compactNow = window.matchMedia('(max-width: 760px)').matches;
+    setPanels((current) => panelsForAnalysis(current, compactNow));
+    setBlinkOpen(true);
+    setWindowOrder((order) => orderForAnalysis(order, compactNow));
     setAnnouncement(`Searching SIMBAD around RA ${formatCoordinate(selected.ra, 5)}°, Dec ${formatCoordinate(selected.dec, 5)}°.`);
   }, []);
 
@@ -264,6 +269,8 @@ export default function App() {
   const togglePanel = (panel: PanelId) => {
     // Opening a window brings it to the front; closing one leaves others untouched.
     if (!panels[panel]) setWindowOrder((order) => raise(order, panel));
+    // A phone shows one sheet at a time, so opening a panel there closes the Blink Viewer.
+    if (compact && !panels[panel]) setBlinkOpen(false);
     setPanels((current) => toggleVisibility(current, panel, compact));
   };
 
@@ -417,6 +424,22 @@ export default function App() {
           onClose={() => setPanels((current) => ({ ...current, inspect: false }))}
         >
           <InspectPanel constellation={{ lookup: constellation, boundaryEnabled: constellationBoundary, onBoundaryChange: setConstellationBoundary }} selection={selection} view={view} survey={survey.data} loading={viewerStatus.loading} analysisEnabled={analysisRequested} />
+        </ToolWindow>
+
+        <ToolWindow
+          id="blink"
+          title="Blink viewer"
+          subtitle={blinkTarget ? `SPHEREx · RA ${formatCoordinate(blinkTarget.ra, 4)}°, Dec ${blinkTarget.dec >= 0 ? '+' : ''}${formatCoordinate(blinkTarget.dec, 4)}°` : undefined}
+          open={blinkOpen}
+          zIndex={zIndexFor(windowOrder, 'blink')}
+          onFocus={() => bringToFront('blink')}
+          placement="left-of"
+          anchorId="inspect"
+          movable={!compact}
+          workspaceRef={workspaceRef}
+          onClose={() => setBlinkOpen(false)}
+        >
+          <BlinkViewer target={blinkTarget} onGoToCoveredRegion={navigateTo} />
         </ToolWindow>
 
         {announcement && <p className="workspace-announcement" role="status" aria-live="polite">{announcement}</p>}

@@ -1,5 +1,7 @@
 import { parseConstellation, type ConstellationInfo } from '../sky/constellations.ts';
-import type { ApiHealth, CatalogObject, ResolvedObject, SkyTarget } from './types.ts';
+import { BLINK_CUTOUT_SIZE } from '../sky/blink/config.ts';
+import { blinkCutoutsPath, BlinkResponseError, parseBlinkResponse } from '../sky/blink/response.ts';
+import type { ApiHealth, BlinkAnalysis, CatalogObject, ResolvedObject, SkyTarget } from './types.ts';
 import type { SkyCoordinates } from '../sky/coordinates.ts';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -177,4 +179,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export async function getConstellation(coordinates: SkyCoordinates, signal?: AbortSignal): Promise<ConstellationInfo> {
   const query = new URLSearchParams({ ra: String(coordinates.ra), dec: String(coordinates.dec) });
   return parseConstellation(await fetchJson(`/api/constellations/at?${query}`, signal));
+}
+
+/**
+ * Aligned May/December SPHEREx cutouts around a position. The analysis target is fixed by the caller, so
+ * camera movement in the sky viewer never triggers a request; cancellation comes from the query's signal.
+ */
+export async function getBlinkCutouts(
+  coordinates: SkyCoordinates,
+  size: number = BLINK_CUTOUT_SIZE,
+  signal?: AbortSignal,
+): Promise<BlinkAnalysis> {
+  const value = await fetchJson(blinkCutoutsPath(coordinates, size), signal);
+  try {
+    return parseBlinkResponse(value, (path) => `${API_BASE_URL}${path}`);
+  } catch (error) {
+    if (error instanceof BlinkResponseError) throw new ApiError(error.message, { code: 'invalid_response', status: 200 });
+    throw error;
+  }
 }

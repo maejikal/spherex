@@ -53,6 +53,24 @@ class Settings(BaseSettings):
     catalogue_cache_ttl_seconds: int = 3600
     memory_cache_max_entries: int = Field(default=512, ge=1)
 
+    # --- Local SPHEREx exposures for the blink viewer ------------------------------------------
+    # Fixed, server-side paths (never taken from a request). The two files are two exposures of the same
+    # sky; frames are ordered by the observation time in their headers, not by this order.
+    blink_fits_files: list[Path] = [
+        Path("~/Downloads/spherex_D5_2025_05_full.fits"),
+        Path("~/Downloads/spherex_D5_2025_12_full.fits"),
+    ]
+    blink_pixel_scale_arcsec: float = Field(default=6.15, gt=0, le=60)
+    blink_default_size: int = Field(default=256, ge=16)
+    blink_min_size: int = Field(default=32, ge=16)
+    blink_max_size: int = Field(default=512, ge=32)
+    # A frame with less than this fraction of valid pixels in the cutout counts as "no coverage".
+    blink_min_coverage_fraction: float = Field(default=0.10, gt=0, le=1)
+    # Below this fraction the viewer is warned that coverage is partial.
+    blink_full_coverage_fraction: float = Field(default=0.95, gt=0, le=1)
+    blink_cache_entries: int = Field(default=24, ge=1)
+    blink_cache_ttl_seconds: int = 3600
+
     # --- Request limits --------------------------------------------------------
     max_name_length: int = 100
     max_nearby_radius_arcsec: float = 120.0

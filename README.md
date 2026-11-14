@@ -51,6 +51,8 @@ Keep UI, viewer state, provider integrations and backend logic in separate modul
 | `GET /api/objects/nearby` | SIMBAD objects near a position (`radius_arcsec`, `limit`) |
 | `GET /api/targets/suggested` | Curated, tile-verified SPHEREx targets |
 | `GET /api/targets/random` | Random tile-verified sky position (uniform on the sphere) |
+| `GET /api/blink/cutouts?ra=&dec=` | Aligned May/December SPHEREx cutouts from two local FITS files, for the blink viewer (`SKY_BLINK_FITS_FILES`) |
+| `GET /api/blink/images/{frame}.png` | PNG for one blink frame (URLs come from the endpoint above) |
 
 ## Data sources and provenance
 

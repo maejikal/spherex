@@ -46,6 +46,25 @@ class NoCoverage(AppError):
     status_code = 404
 
 
+class FitsNoCoverage(AppError):
+    """The local SPHEREx exposures do not usefully cover the requested sky region."""
+
+    code = "no_fits_coverage"
+    status_code = 404
+
+
+class FitsUnavailable(AppError):
+    """A configured FITS file is missing or is not a usable SPHEREx image."""
+
+    code = "fits_unavailable"
+    status_code = 503
+
+
+class FitsProcessingError(AppError):
+    code = "fits_processing_error"
+    status_code = 500
+
+
 class ObjectNotFound(AppError):
     code = "object_not_found"
     status_code = 404
