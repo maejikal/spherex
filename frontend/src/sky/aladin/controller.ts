@@ -48,6 +48,7 @@ type AladinModule = typeof import('aladin-lite');
 export class AladinController {
   private aladin: AladinInstance;
   private A: AladinModule['default'];
+  private readonly options: AladinControllerOptions;
   private hips: AladinHiPS | null = null;
   private marker: AladinCatalog | null = null;
   private frame: number;
@@ -64,17 +65,27 @@ export class AladinController {
   private tileFailures: number[] = [];
   private hoverFrame: number | null = null;
   private pendingHover: { ra: number; dec: number } | null = null;
-  private lastClick: { time: number; x: number; y: number } | null = null;
 
   private constructor(
     A: AladinModule['default'],
     aladin: AladinInstance,
-    private readonly options: AladinControllerOptions,
+    options: AladinControllerOptions,
   ) {
     this.A = A;
     this.aladin = aladin;
+    this.options = options;
     this.frame = options.initial.frame;
   }
+
+  /** Use the browser's native double-click gesture, then convert its view pixel to sky coordinates. */
+  private handleDoubleClick = (event: MouseEvent): void => {
+    const bounds = this.options.container.getBoundingClientRect();
+    const position = this.aladin.pix2world(event.clientX - bounds.left, event.clientY - bounds.top);
+    if (!position || !Number.isFinite(position[0]) || !Number.isFinite(position[1]) || position[1] < -90 || position[1] > 90) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.options.callbacks.onDoubleClick({ ra: normalizeRightAscension(position[0]), dec: position[1] });
+  };
 
   static async create(options: AladinControllerOptions): Promise<AladinController> {
     const module = await import('aladin-lite');
@@ -130,6 +141,7 @@ export class AladinController {
     this.applyGrid(options.initial.grid);
     this.marker = A.catalog({ name: 'selection', shape: 'cross', color: '#6ee7d0', sourceSize: 22 });
     aladin.addCatalog(this.marker);
+    options.container.addEventListener('dblclick', this.handleDoubleClick, true);
 
     const userChange = () => {
       if (this.destroyed) return;
@@ -146,20 +158,9 @@ export class AladinController {
     };
     aladin.on('positionChanged', userChange);
     aladin.on('zoomChanged', userChange);
-    aladin.on('click', ((event: { ra: number; dec: number; x: number; y: number; isDragging?: boolean }) => {
+    aladin.on('click', ((event: { ra: number; dec: number; isDragging?: boolean }) => {
       if (event.isDragging || !Number.isFinite(event.ra) || !Number.isFinite(event.dec)) return;
-      const position = { ra: normalizeRightAscension(event.ra), dec: event.dec };
-      options.callbacks.onClick(position);
-
-      const now = performance.now();
-      const previous = this.lastClick;
-      const isDoubleClick = previous !== null && now - previous.time <= 500 && Math.hypot(event.x - previous.x, event.y - previous.y) <= 24;
-      if (isDoubleClick) {
-        this.lastClick = null;
-        options.callbacks.onDoubleClick(position);
-      } else {
-        this.lastClick = { time: now, x: event.x, y: event.y };
-      }
+      options.callbacks.onClick({ ra: normalizeRightAscension(event.ra), dec: event.dec });
     }) as never);
     aladin.on('mouseMove', ((event: { ra: number; dec: number }) => {
       this.pendingHover = Number.isFinite(event?.ra) ? { ra: normalizeRightAscension(event.ra), dec: event.dec } : null;
@@ -237,6 +238,19 @@ export class AladinController {
     this.programmaticUntil = performance.now() + SETTLE_MS * 3;
     if (!current || Math.abs(target.fov - current.fov) > current.fov * 1e-3) this.aladin.setFoV(target.fov);
     if (!current || !AladinController.sameCenter(target, current)) this.aladin.gotoRaDec(target.ra, target.dec);
+    this.beginLoading();
+  }
+
+  /** Explicit user intent: bypass stale app-echo guards and center on exact requested coordinates. */
+  centerOn(position: { ra: number; dec: number }): void {
+    if (this.destroyed || !Number.isFinite(position.ra) || !Number.isFinite(position.dec) || position.dec < -90 || position.dec > 90) return;
+    if (this.settleTimer !== null) {
+      window.clearTimeout(this.settleTimer);
+      this.settleTimer = null;
+    }
+    this.lastEmitted = null;
+    this.programmaticUntil = performance.now() + SETTLE_MS * 3;
+    this.aladin.gotoRaDec(normalizeRightAscension(position.ra), position.dec);
     this.beginLoading();
   }
 
@@ -346,6 +360,7 @@ export class AladinController {
 
   destroy(): void {
     this.destroyed = true;
+    this.options.container.removeEventListener('dblclick', this.handleDoubleClick, true);
     if (this.settleTimer !== null) window.clearTimeout(this.settleTimer);
     if (this.quietTimer !== null) window.clearTimeout(this.quietTimer);
     if (this.failureTimer !== null) window.clearTimeout(this.failureTimer);

@@ -134,7 +134,9 @@ export function AladinSkyViewer({
         },
         onDoubleClick: (position) => {
           const current = latest.current;
-          if (!current.status.loading && !current.status.tileError) current.onCenter(position);
+          controllerRef.current?.centerOn(position);
+          current.onSelect(position);
+          current.onCenter(position);
         },
         onHover: setCursor,
         onLoading: (loading) => {
