@@ -95,13 +95,20 @@ cache; switching to another channel and back re-used the first channel's cached 
 ## Blink viewer
 
 Choosing **Analyze area** keeps its existing behaviour (Inspect window + SIMBAD search) and also opens the **Blink viewer**, a floating
-window placed bottom-aligned immediately left of Inspect. It requests `/api/blink/cutouts` for the position captured at that click, so
-panning the sky or selecting elsewhere never replaces an open analysis; a newer Analyze simply changes the query key.
+window placed bottom-aligned immediately left of Inspect. It captures that position without starting a blink observation request.
+Choose the source, channel/wavelength and archive **Field of view**, then press **Load observations**. Square-field presets are
+0.02°, 0.05°, 0.1° (default), 0.2°, 0.3° and 0.5° per side. Blink settings, visible-field readouts and observation details display degrees. This changes the requested sky area, not display zoom.
+Only the lightweight mode/channel metadata can load before submission; observation discovery and cutout downloads wait for Load.
+Draft FOV/channel changes do not alter an existing request or loaded pair until applied. Submitted settings, including FOV, own the
+query/cache key and loading clock. New Analyze positions and source switches require Load again. Local SPHEREx retains its
+256 × 256 pixel cutouts; its angular FOV depends on server pixel scale, so no unsupported angular selector is shown.
+Observation settings collapse after a pair loads to preserve image space; expand them to change settings. Panning the sky or
+selecting elsewhere never replaces an open analysis.
 Both aligned PNGs are loaded and decoded before playback is allowed; frames are stacked and toggled with `visibility`, so a switch is
 instantaneous with no layout change. Controls: Play/Pause, 0.25 / 0.5 / 1 / 2 s per frame, previous/next, direct frame buttons (these pause),
 1x/2x/4x zoom (pixel-preserving when zoomed), keyboard (Space, arrow keys). Pure logic lives in `src/sky/blink/` (`response.ts`, `playback.ts`,
 `errors.ts`) with tests in `tests/blink.test.mjs`. On a phone-sized screen only one sheet fits, so the Blink viewer takes it and Inspect is one tap away.
-The prototype covers only the sky around RA 210.54, Dec +54.46; elsewhere the viewer says so and offers a "Go to covered region" button.
+Local coverage is limited to configured FITS pairs; outside those fields the viewer explains this and offers a "Go to covered region" button.
 
 The display initially fits the tight union of both PNG alpha bounds on one shared rectangular viewport, with no artificial padding. The stage preserves that rectangle’s aspect ratio so sky imagery is never stretched; rectangular fields show both angular dimensions.
 This removes transparent padding without independently centering epochs or altering their celestial alignment. **Full field** restores the
@@ -166,3 +173,12 @@ Verification: `npm test`, `npm run typecheck`, `npm run build`. No lint script i
 
 
 Each community review entry and case detail offers **Open in blink viewer**. It opens a focused popup above the current review with that case’s original IndexedDB image evidence. The case or queue remains mounted underneath, preserving scroll and unsaved review input. The sky view and URL do not change. No archive pair is rediscovered. Playback, frame stepping, zoom, coverage and observation details remain available; **Back to review**, the popup close button, or Escape closes only the popup and restores focus to its opener. Missing evidence reports an error with retry/return controls rather than substituting other images. Closing the popup stops playback and releases its temporary image URLs. Saved evidence cannot be reflagged from this player; annotate a fresh analysis for a new case.
+
+
+### Blink spectral selection
+
+The archive Blink viewer has linked **Channel** and **Wavelength** selectors from the verified IRSA cube channel table. Either selector updates the same nominal channel; **Automatic** restores unrestricted pair selection. Blink selection is independent of the main map's channel and captured sky coordinates. Cube-blank channels do not establish archive coverage and are not disabled here. If metadata is unavailable, automatic analysis remains usable and the channel list can be retried.
+
+Selections request `wavelength_um` from the backend, isolate query caches, and cancel/ignore stale requests. Actual observation wavelengths remain visible in Observation details; they need not equal the requested nominal wavelength. Both observations must include it within their calibrated passbands at the target. No matching verified pair produces an explicit error, not substitute imagery. Local FITS pairs retain fixed wavelengths and explain why switching requires archive mode. No new dependencies.
+
+Archive blink also offers **Detector** (Automatic or 1–6). Detector changes are drafts until **Load observations**, independent of nominal channel/wavelength; incompatible selections report no matching observations rather than substituting another detector. Local FITS detector selection remains fixed.

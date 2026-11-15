@@ -218,8 +218,10 @@ export async function getDynamicBlink(
   coordinates: SkyCoordinates,
   fovDeg: number = BLINK_DYNAMIC_FOV_DEG,
   signal?: AbortSignal,
+  wavelengthUm: number | null = null,
+  detector: number | null = null,
 ): Promise<BlinkAnalysis> {
-  const value = await fetchJson(dynamicBlinkPath(coordinates, fovDeg), signal);
+  const value = await fetchJson(dynamicBlinkPath(coordinates, fovDeg, wavelengthUm, detector), signal);
   try {
     return parseBlinkResponse(value, (path) => `${API_BASE_URL}${path}`);
   } catch (error) {

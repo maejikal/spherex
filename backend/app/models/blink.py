@@ -85,6 +85,8 @@ class Provenance(BaseModel):
 
 
 class DynamicBlinkResponse(BlinkResponse):
+    requested_wavelength_um: float | None = None
+    requested_detector: int | None = None
     mode: str = "dynamic"
     fov_deg: float
     rotation_deg: int

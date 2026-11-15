@@ -12,7 +12,7 @@ const { outputText } = ts.transpileModule(readFileSync(file, 'utf8'), {
 const resolved = outputText.replace(/import \{ getBlinkCutouts, getBlinkModes, getDynamicBlink \} from [^;]+;/,
   'const getBlinkCutouts = () => { throw new Error("Unexpected API call in layout test"); }; const getBlinkModes = getBlinkCutouts; const getDynamicBlink = getBlinkCutouts;').replace(/from (['"])([^'"]+)\1/g, (_, quote, name) =>
   `from ${quote}${name.startsWith('.') ? new URL(name, file).href : import.meta.resolve(name)}${quote}`);
-const { BlinkPlayer, BlinkDestination } = await import(`data:text/javascript;base64,${Buffer.from(resolved).toString('base64')}`);
+const { BlinkPlayer, BlinkDestination, BlinkSpectralControls } = await import(`data:text/javascript;base64,${Buffer.from(resolved).toString('base64')}`);
 const analysis = {
   ra: 12, dec: -8, imageSize: 256, fieldOfViewArcmin: 6, pixelScaleArcsec: 1.4,
   frames: ['first', 'second'].map(id => ({ id, label: id, date: 'Test fixture', imageUrl: `/fixture-${id}`, coverageFraction: 1 })),
@@ -57,4 +57,34 @@ test('observation details provide a dedicated reading view with a visible return
 test('observation warning paragraphs have breathing room without affecting other callouts', () => {
   const css = readFileSync(new URL('../src/workspace.css', import.meta.url), 'utf8');
   assert.match(css, /\.blink-details__content \.callout p \+ p\s*\{[^}]*margin-top:\s*12px/);
+});
+
+
+test('blink has linked channel and wavelength selectors including automatic selection', () => {
+  const survey = { depth: 3, wavelengthsUm: [0.753, 0.771, 0.790], blankFrames: [1] };
+  const markup = renderToStaticMarkup(createElement(BlinkSpectralControls, { survey, frame: 1, onChange: () => {} }));
+  assert.match(markup, /<fieldset[^>]*aria-label="Blink spectral selection"/);
+  assert.match(markup, /<span>Channel<\/span>/);
+  assert.match(markup, /<span>Wavelength<\/span>/);
+  assert.equal((markup.match(/value="1" selected=""/g) ?? []).length, 2);
+  assert.match(markup, /0.771 μm/);
+  assert.match(markup, /Automatic/);
+  assert.doesNotMatch(markup, /disabled/); // blank cube frames do not imply no archive exposure
+  assert.doesNotMatch(markup, /<p[^>]*class="blink-note"/);
+  assert.doesNotMatch(markup, /aria-describedby/);
+});
+
+test('missing channel metadata keeps automatic selection available with recovery', () => {
+  const markup = renderToStaticMarkup(createElement(BlinkSpectralControls, { frame: null, metadataError: true, onRetry: () => {}, onChange: () => {} }));
+  assert.match(markup, /Channel list unavailable/);
+  assert.match(markup, /Retry channel list/);
+  assert.match(markup, /Automatic wavelength selection remains available/);
+});
+
+
+test('blink field readouts and image descriptions use degrees', () => {
+  const markup = renderToStaticMarkup(createElement(BlinkPlayer, { analysis, switcher: null }));
+  assert.match(markup, /0\.100° visible/);
+  assert.match(markup, /0\.100° · 1\.4″\/px/);
+  assert.doesNotMatch(markup, /′/);
 });

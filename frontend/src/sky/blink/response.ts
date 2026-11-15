@@ -10,8 +10,10 @@ export class BlinkResponseError extends Error {
 const IMAGE_PATHS = ['/api/blink/images/', '/api/blink/dynamic/images/'];
 
 /** API path for archive-driven (dynamic) analysis of one position. */
-export function dynamicBlinkPath(coordinates: { ra: number; dec: number }, fovDeg: number): string {
+export function dynamicBlinkPath(coordinates: { ra: number; dec: number }, fovDeg: number, wavelengthUm: number | null = null, detector: number | null = null): string {
   const query = new URLSearchParams({ ra: String(coordinates.ra), dec: String(coordinates.dec), fov_deg: String(fovDeg) });
+  if (wavelengthUm !== null) query.set('wavelength_um', String(wavelengthUm));
+  if (detector !== null) query.set('detector', String(detector));
   return `/api/blink/dynamic?${query}`;
 }
 
@@ -63,6 +65,8 @@ export function parseBlinkResponse(value: unknown, resolveUrl: (path: string) =>
     warnings: Array.isArray(root.warnings) ? root.warnings.filter((item): item is string => typeof item === 'string') : [],
     mode: root.mode === 'dynamic' ? 'dynamic' : 'local',
     fovDeg: optionalNumber(root.fov_deg),
+    requestedWavelengthUm: optionalNumber(root.requested_wavelength_um),
+    requestedDetector: optionalNumber(root.requested_detector),
     rotationDeg: optionalNumber(root.rotation_deg),
     geometricCoverage: optionalNumber(root.geometric_coverage),
     selection: parseSelection(root.selection),

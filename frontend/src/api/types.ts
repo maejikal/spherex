@@ -92,6 +92,8 @@ export interface BlinkAnalysis extends SkyCoordinates {
   /** `dynamic`: pair chosen from the NASA/IPAC archive for this position. `local`: selected fixed local FITS pair. */
   mode: BlinkMode;
   fovDeg?: number;
+  requestedWavelengthUm?: number;
+  requestedDetector?: number;
   rotationDeg?: number;
   geometricCoverage?: number;
   selection?: BlinkSelection;

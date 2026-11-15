@@ -1154,3 +1154,116 @@ def test_discovery_persistence_failure_does_not_break_live_search(archive, stack
     monkeypatch.setattr("app.services.discovery_cache.os.replace", fail)
     observations, _ = stack.irsa.search(*T)
     assert len(observations) == 2
+
+
+def test_requested_wavelength_selects_verified_pair_and_isolates_cache(archive, stack):
+    standard_pair(archive, tag="short")
+    standard_pair(archive, det=5, tag="long", may_extra={"lam": (4.0, 4.16)}, dec_extra={"lam": (4.0, 4.16)})
+    short = stack.service.analyse(*T, FOV, wavelength_um=1.875)
+    long = stack.service.analyse(*T, FOV, wavelength_um=4.075)
+    assert short is stack.service.analyse(*T, FOV, wavelength_um=1.875)
+    assert long is not short
+    assert [f.cutout.obs.detector for f in short.frames] == ["D3", "D3"]
+    assert [f.cutout.obs.detector for f in long.frames] == ["D5", "D5"]
+    for result, requested in ((short, 1.875), (long, 4.075)):
+        assert result.requested_wavelength_um == requested
+        assert all(abs(f.centre_wavelength_um - requested) <= f.centre_bandwidth_um / 2 for f in result.frames)
+    assert stack.service.image(*T, FOV, "2025-05", wavelength_um=4.075) == long.images["2025-05"]
+
+
+def test_requested_wavelength_never_falls_back_to_unrelated_pair(archive, stack):
+    standard_pair(archive)
+    with pytest.raises(DynamicSelectionError) as caught:
+        stack.service.analyse(*T, FOV, wavelength_um=4.1)
+    assert caught.value.code == "wavelength_mismatch"
+    assert "4.1" in caught.value.message
+    assert stack.service.analyse(*T, FOV).frames  # automatic selection still works
+
+
+@pytest.mark.parametrize("wave", [0, -1, 0.74, 5.01, math.nan, math.inf])
+def test_requested_wavelength_validation_precedes_discovery(stack, wave):
+    with pytest.raises(InvalidParameters):
+        stack.service.analyse(*T, FOV, wavelength_um=wave)
+
+
+def test_requested_wavelength_endpoint_preserves_image_identity(api, archive):
+    standard_pair(archive)
+    standard_pair(archive, det=5, may_extra={"lam": (4.0, 4.16)}, dec_extra={"lam": (4.0, 4.16)})
+    params = {"ra": T[0], "dec": T[1], "wavelength_um": 4.075}
+    response = api.get("/api/blink/dynamic", params=params)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requested_wavelength_um"] == 4.075
+    for frame in body["frames"]:
+        assert frame["detector"] == 5
+        assert "wavelength_um=4.075" in frame["image_url"]
+        image = api.get(frame["image_url"])
+        assert image.status_code == 200 and image.headers["content-type"] == "image/png"
+    for wave in ("nan", "inf", "oops", 0.74, 5.01):
+        invalid = api.get("/api/blink/dynamic", params={**params, "wavelength_um": wave})
+        assert invalid.status_code == 422
+        assert invalid.json()["error"]["code"] == "invalid_parameters"
+
+
+def test_requested_wavelength_is_checked_against_fits_not_prediction(archive, stack, monkeypatch):
+    from dataclasses import replace
+    from app.services import dynamic_blink
+
+    standard_pair(archive)
+    original = dynamic_blink.predict
+
+    def misleading_prediction(*args, **kwargs):
+        result = original(*args, **kwargs)
+        return replace(result, wavelength_um=1.93) if result is not None else None
+
+    monkeypatch.setattr(dynamic_blink, "predict", misleading_prediction)
+    with pytest.raises(DynamicSelectionError) as caught:
+        stack.service.analyse(*T, FOV, wavelength_um=1.93)
+    assert caught.value.code == "wavelength_mismatch"
+    assert "outside the calibrated passband" in caught.value.message
+
+
+def test_cached_recovery_preserves_requested_wavelength(archive, stack, cfg):
+    standard_pair(archive)
+    stack.service.analyse(*T, FOV, wavelength_um=1.875)
+    archive.sia_status = [502] * 20
+    restarted = Stack(cfg)
+    try:
+        recovered = restarted.service.analyse(*T, FOV, wavelength_um=1.875)
+        assert recovered.requested_wavelength_um == 1.875
+        assert any("Cached data" in note for note in recovered.warnings)
+        with pytest.raises(UpstreamUnavailable, match="requested 4.1"):
+            restarted.service.analyse(*T, FOV, wavelength_um=4.1)
+    finally:
+        restarted.irsa.close()
+
+
+def test_detector_selection_is_enforced_and_images_are_pinned(api, archive):
+    standard_pair(archive, det=3)
+    standard_pair(archive, det=5)
+    params = {"ra": T[0], "dec": T[1], "detector": 5}
+    response = api.get('/api/blink/dynamic', params=params)
+    assert response.status_code == 200
+    body = response.json()
+    assert body['requested_detector'] == 5
+    assert {f['detector'] for f in body['frames']} == {5}
+    for frame in body['frames']:
+        assert 'detector=5' in frame['image_url']
+        assert api.get(frame['image_url']).status_code == 200
+    missing = api.get('/api/blink/dynamic', params={**params, 'detector': 6})
+    assert missing.json()['error']['code'] == 'no_observations'
+    for invalid in (0, 7, 'bad', 2.5):
+        assert api.get('/api/blink/dynamic', params={**params, 'detector': invalid}).status_code == 422
+
+
+def test_detector_cache_and_wavelength_constraints_remain_independent(archive, stack):
+    standard_pair(archive, det=3)
+    standard_pair(archive, det=5)
+    a = stack.service.analyse(*T, FOV, detector=3)
+    b = stack.service.analyse(*T, FOV, detector=5)
+    assert a is not b
+    assert a is stack.service.analyse(*T, FOV, detector=3)
+    assert {f.cutout.obs.detector for f in a.frames} == {'D3'}
+    assert {f.cutout.obs.detector for f in b.frames} == {'D5'}
+    with pytest.raises(DynamicSelectionError):
+        stack.service.analyse(*T, FOV, detector=5, wavelength_um=4.1)

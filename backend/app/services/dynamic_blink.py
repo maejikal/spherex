@@ -273,6 +273,8 @@ class DynamicResult:
     warnings: list[str]
     release: str
     collection: str
+    requested_wavelength_um: float | None = None
+    requested_detector: int | None = None
 
 
 class HeaderSource(Protocol):
@@ -305,11 +307,15 @@ class DynamicBlinkService:
         )
 
     # -- public ----------------------------------------------------------------------------------
-    def analyse(self, ra: float, dec: float, fov_deg: float | None) -> DynamicResult:
+    def analyse(self, ra: float, dec: float, fov_deg: float | None, *, wavelength_um: float | None = None, detector: int | None = None) -> DynamicResult:
         fov = self._s.dynamic_fov_default if fov_deg is None else float(fov_deg)
         if not (math.isfinite(fov) and self._s.dynamic_fov_min <= fov <= self._s.dynamic_fov_max):
             raise InvalidParameters(f"fov_deg must be between {self._s.dynamic_fov_min} and {self._s.dynamic_fov_max} degrees.")
-        key = f"{ra:.6f}|{dec:.6f}|{fov:.5f}"
+        if wavelength_um is not None and not (math.isfinite(wavelength_um) and 0.75 <= wavelength_um <= 5.0):
+            raise InvalidParameters("wavelength_um must be between 0.75 and 5.0 micrometres.")
+        if detector is not None and (type(detector) is not int or not 1 <= detector <= 6):
+            raise InvalidParameters("detector must be an integer between 1 and 6.")
+        key = f"{ra:.6f}|{dec:.6f}|{fov:.5f}|{wavelength_um}|{detector}"
         with self._lock:
             hit = self._results.get(key)
             gate = self._gates.setdefault(key, threading.Lock())
@@ -320,13 +326,15 @@ class DynamicBlinkService:
                 hit = self._results.get(key)
             if hit is not None:
                 return hit
-            result = self._analyse(ra, dec, fov)
+            result = self._analyse(ra, dec, fov, wavelength_um, detector)
+            result.requested_wavelength_um = wavelength_um
+            result.requested_detector = detector
             with self._lock:
                 self._results.set(key, result)
             return result
 
-    def image(self, ra: float, dec: float, fov_deg: float | None, frame_identifier: str) -> bytes:
-        result = self.analyse(ra, dec, fov_deg)
+    def image(self, ra: float, dec: float, fov_deg: float | None, frame_identifier: str, *, wavelength_um: float | None = None, detector: int | None = None) -> bytes:
+        result = self.analyse(ra, dec, fov_deg, wavelength_um=wavelength_um, detector=detector)
         try:
             return result.images[frame_identifier]
         except KeyError:
@@ -385,7 +393,7 @@ class DynamicBlinkService:
         return have, failed
 
     # -- analysis --------------------------------------------------------------------------------
-    def _analyse(self, ra: float, dec: float, fov: float) -> DynamicResult:
+    def _analyse(self, ra: float, dec: float, fov: float, wavelength_um: float | None = None, detector: int | None = None) -> DynamicResult:
         try:
             observations, _ = self._irsa.search(ra, dec)
         except (UpstreamUnavailable, UpstreamTimeout) as outage:
@@ -401,7 +409,7 @@ class DynamicBlinkService:
                 except UpstreamInvalidResponse:
                     continue
             try:
-                result = self._analyse_observations(ra, dec, fov, available, cached_only=True)
+                result = self._analyse_observations(ra, dec, fov, available, cached_only=True, wavelength_um=wavelength_um, detector=detector)
             except (DynamicSelectionError, UpstreamInvalidResponse, UpstreamUnavailable, UpstreamTimeout) as exc:
                 raise type(outage)(
                     f"{outage.message} Cached data cannot provide a verified pair for this view: {exc.message}"
@@ -410,11 +418,15 @@ class DynamicBlinkService:
                 f"Cached data; archive unavailable. Discovery metadata saved {saved}; "
                 "newer observations may be missing. Local FITS were revalidated and re-rendered.")
             return result
-        return self._analyse_observations(ra, dec, fov, observations)
+        return self._analyse_observations(ra, dec, fov, observations, wavelength_um=wavelength_um, detector=detector)
 
     def _analyse_observations(self, ra: float, dec: float, fov: float, observations: list[SiaObservation],
-                              *, cached_only: bool = False) -> DynamicResult:
+                              *, cached_only: bool = False, wavelength_um: float | None = None, detector: int | None = None) -> DynamicResult:
         s = self._s
+        if detector is not None:
+            observations = [obs for obs in observations if obs.detector == f"D{detector}"]
+            if not observations:
+                raise DynamicSelectionError(f"No SPHEREx observations from detector {detector} cover this position.", "no_observations")
         if not observations:
             raise DynamicSelectionError("No SPHEREx DR1 observations in the NASA/IPAC archive cover this position.", "no_observations")
         frame = field_frame(ra, dec)
@@ -466,6 +478,12 @@ class DynamicBlinkService:
             reason, text = self._no_candidate_reason(report, fov)
             raise DynamicSelectionError(text, reason)
 
+        if wavelength_um is not None:
+            # Footprint wavelengths are predictions only. Prioritise nearby passbands, but never reject
+            # on this estimate: the downloaded FITS calibration is authoritative, even if SIA is offset.
+            report.candidates.sort(key=lambda c: max(
+                abs(p.wavelength_um - wavelength_um) / p.bandwidth_um for p in (c.a, c.b)))
+
         rejected: list[str] = []
         reasons: list[str] = []
         bad_observations: dict[tuple[str, str], str] = {}  # an observation that failed once is never downloaded/verified again
@@ -479,7 +497,7 @@ class DynamicBlinkService:
                 continue
             attempts += 1
             try:
-                return self._verify_and_build(cand, ra, dec, fov, attempts, rejected, calibrations, failed, cached_only=cached_only)
+                return self._verify_and_build(cand, ra, dec, fov, attempts, rejected, calibrations, failed, cached_only=cached_only, wavelength_um=wavelength_um)
             except _Reject as rej:
                 rejected.append(f"{cand.a.obs.obs_id} / {cand.b.obs.obs_id}: {rej.detail}")
                 reasons.append(rej.reason)
@@ -508,7 +526,7 @@ class DynamicBlinkService:
             f"(within {s.max_pair_gap_nm:g} nm and {s.max_gap_over_bandwidth:.0%} of the bandwidth). Blinking them would risk false changes.{hint}")
 
     def _verify_and_build(self, cand: PairCandidate, ra: float, dec: float, fov: float, tried: int, rejected: list[str],
-                          calibrations: dict[str, DetectorCalibration], excluded: dict[str, str], *, cached_only: bool = False) -> DynamicResult:
+                          calibrations: dict[str, DetectorCalibration], excluded: dict[str, str], *, cached_only: bool = False, wavelength_um: float | None = None) -> DynamicResult:
         s = self._s
         out_n = output_size_pixels(fov, s.blink_pixel_scale_arcsec)
         out_wcs = build_output_wcs(ra, dec, out_n, s.blink_pixel_scale_arcsec, rotation_deg=float(cand.angle))
@@ -542,6 +560,13 @@ class DynamicBlinkService:
             frame = resample_cutout(cut, out_wcs, sky_ra, sky_dec, ra, dec, mapping, s)
             if not math.isfinite(frame.centre_wavelength_um):
                 raise _Reject("invalid_calibration", f"{pred.obs.obs_id}: target lies outside the wavelength calibration grid", key)
+            if wavelength_um is not None and not (
+                math.isfinite(frame.centre_bandwidth_um) and frame.centre_bandwidth_um > 0
+                and abs(frame.centre_wavelength_um - wavelength_um) <= frame.centre_bandwidth_um / 2
+            ):
+                raise _Reject("wavelength_mismatch",
+                              f"{pred.obs.obs_id}: requested {wavelength_um:g} µm is outside the calibrated passband "
+                              f"at the target ({frame.centre_wavelength_um:.4f} µm ± {frame.centre_bandwidth_um / 2:.4f} µm)", key)
             if frame.geometric_coverage < s.min_geometric_coverage:
                 raise _Reject("insufficient_coverage", f"{pred.obs.obs_id}: only {frame.geometric_coverage:.1%} of the field lies inside the cutout", key)
             if mapping.prediction_error_px > s.max_position_error_px:

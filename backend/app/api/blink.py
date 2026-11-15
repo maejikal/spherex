@@ -106,9 +106,18 @@ def blink_image(
 
 DynFov = Annotated[float | None, Query(gt=0, le=10, allow_inf_nan=False, description="Square field of view in degrees (default 0.1; 0.02-0.5)")]
 
+DynDetector = Annotated[int | None, Query(ge=1, le=6, description="SPHEREx detector (1–6); omit for automatic selection.")]
 
-def _dynamic_image_url(fid: str, ra: float, dec: float, fov: float) -> str:
-    return f"/api/blink/dynamic/images/{fid}.png?" + urlencode({"ra": f"{ra:.6f}", "dec": f"{dec:.6f}", "fov_deg": f"{fov:g}"})
+DynWavelength = Annotated[float | None, Query(ge=0.75, le=5.0, allow_inf_nan=False, description="Requested wavelength in micrometres; must lie within each observation's calibrated centre passband. Omit for automatic selection.")]
+
+
+def _dynamic_image_url(fid: str, ra: float, dec: float, fov: float, wavelength_um: float | None = None, detector: int | None = None) -> str:
+    params = {"ra": f"{ra:.6f}", "dec": f"{dec:.6f}", "fov_deg": f"{fov:g}"}
+    if wavelength_um is not None:
+        params["wavelength_um"] = str(wavelength_um)
+    if detector is not None:
+        params["detector"] = str(detector)
+    return f"/api/blink/dynamic/images/{fid}.png?" + urlencode(params)
 
 
 def _dynamic_response(result: DynamicResult, settings) -> DynamicBlinkResponse:  # noqa: ANN001 - Settings
@@ -119,7 +128,7 @@ def _dynamic_response(result: DynamicResult, settings) -> DynamicBlinkResponse: 
         valid_wl = f.wavelength_map[f.valid & (f.wavelength_map == f.wavelength_map)]
         frames.append(BlinkFrame(
             id=frame_id(f), label=f"{calendar.month_name[month]} {year}", date=obs.iso_date, date_obs=f.cutout.date_obs or obs.iso_date,
-            mjd=obs.mjd, obsid=obs.obs_id, detector=int(obs.detector[1:]), image_url=_dynamic_image_url(frame_id(f), result.ra, result.dec, result.fov_deg),
+            mjd=obs.mjd, obsid=obs.obs_id, detector=int(obs.detector[1:]), image_url=_dynamic_image_url(frame_id(f), result.ra, result.dec, result.fov_deg, result.requested_wavelength_um, result.requested_detector),
             coverage_fraction=round(f.good_fraction, 4),
             wavelength_um=WavelengthRange(min=float(valid_wl.min()), max=float(valid_wl.max()), mean=f.centre_wavelength_um) if valid_wl.size else None,
             background_mjy_sr=background, unit="MJy / sr", bandwidth_um=f.centre_bandwidth_um, geometric_coverage=round(f.geometric_coverage, 4),
@@ -139,7 +148,7 @@ def _dynamic_response(result: DynamicResult, settings) -> DynamicBlinkResponse: 
             note="Display scaling only. Not photometric calibration; calibrated values are unchanged.",
         ),
         frames=frames, common_coverage_fraction=round(result.common_good_fraction, 4), warnings=result.warnings,
-        fov_deg=result.fov_deg, rotation_deg=result.rotation_deg, wcs=result.wcs_header, geometric_coverage=round(result.common_geometric_coverage, 4),
+        requested_detector=result.requested_detector, requested_wavelength_um=result.requested_wavelength_um, fov_deg=result.fov_deg, rotation_deg=result.rotation_deg, wcs=result.wcs_header, geometric_coverage=round(result.common_geometric_coverage, 4),
         selection=PairSelectionInfo(
             predicted_gap_nm=round(pair.gap_nm, 3), actual_gap_nm=round(result.exact_gap_nm, 3), actual_gap_over_bandwidth=round(result.exact_gap_over_bandwidth, 4),
             field_gap_nm=round(result.field_gap_nm, 3), bandwidth_difference_fraction=round(pair.bandwidth_difference, 4),
@@ -169,18 +178,18 @@ def blink_modes(services: Annotated[Services, Depends(get_services)]) -> dict:
 
 
 @router.get("/blink/dynamic", response_model=DynamicBlinkResponse, response_model_exclude_none=True)
-def blink_dynamic(ra: Ra, dec: Dec, services: Annotated[Services, Depends(get_services)], fov_deg: DynFov = None) -> DynamicBlinkResponse:
+def blink_dynamic(ra: Ra, dec: Dec, services: Annotated[Services, Depends(get_services)], fov_deg: DynFov = None, wavelength_um: DynWavelength = None, detector: DynDetector = None) -> DynamicBlinkResponse:
     """Wavelength-matched two-epoch SPHEREx cutouts for any position the archive covers (IRSA discovery + cutouts)."""
     if not services.settings.blink_dynamic_enabled or services.dynamic is None:
         raise InvalidParameters("Archive (dynamic) blink analysis is disabled on this server.")
-    return _dynamic_response(services.dynamic.analyse(ra, dec, fov_deg), services.settings)
+    return _dynamic_response(services.dynamic.analyse(ra, dec, fov_deg, wavelength_um=wavelength_um, detector=detector), services.settings)
 
 
 @router.get("/blink/dynamic/images/{frame_id}.png", response_class=Response, responses={200: {"content": {"image/png": {}}}})
 def blink_dynamic_image(
-    frame_id: Annotated[str, Path(pattern=r"^\d{4}-\d{2}$")], ra: Ra, dec: Dec, services: Annotated[Services, Depends(get_services)], fov_deg: DynFov = None,
+    frame_id: Annotated[str, Path(pattern=r"^\d{4}-\d{2}$")], ra: Ra, dec: Dec, services: Annotated[Services, Depends(get_services)], fov_deg: DynFov = None, wavelength_um: DynWavelength = None, detector: DynDetector = None,
 ) -> Response:
     if services.dynamic is None:
         raise InvalidParameters("Archive (dynamic) blink analysis is disabled on this server.")
-    png = services.dynamic.image(ra, dec, fov_deg, frame_id)
+    png = services.dynamic.image(ra, dec, fov_deg, frame_id, wavelength_um=wavelength_um, detector=detector)
     return Response(content=png, media_type="image/png", headers={"Cache-Control": IMAGE_CACHE_CONTROL})

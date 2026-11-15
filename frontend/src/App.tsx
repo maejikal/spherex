@@ -513,7 +513,7 @@ export default function App() {
           workspaceRef={workspaceRef}
           onClose={() => setBlinkOpen(false)}
         >
-          <BlinkViewer onFlagForReview={setFlaggedAnalysis} target={blinkTarget} mode={blinkMode} onModeChange={setBlinkMode} onGoToCoveredRegion={navigateTo} />
+          <BlinkViewer survey={survey.data} surveyError={survey.isError} onRetrySurvey={() => void survey.refetch()} onFlagForReview={setFlaggedAnalysis} target={blinkTarget} mode={blinkMode} onModeChange={setBlinkMode} onGoToCoveredRegion={navigateTo} />
         </ToolWindow>
 
         {announcement && <p className={`workspace-announcement${announcement.startsWith('Selected position:') ? ' workspace-announcement--selection' : ''}`} role="status" aria-live="polite">{announcement}</p>}

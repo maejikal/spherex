@@ -342,7 +342,7 @@ test('queries are keyed by mode and position so a mode switch or a new analysis 
   assert.deepEqual(blinkQueryKey('dynamic', t, 0.1, 'default'), blinkQueryKey('dynamic', t, 0.1, 'barnards-star'));
   assert.notDeepEqual(blinkQueryKey('local', t, 256), blinkQueryKey('local', t, 256, 'default'));
   assert.notDeepEqual(blinkQueryKey('local', t, 256, 'default'), blinkQueryKey('local', t, 256, 'barnards-star'));
-  assert.equal(modeLabel('dynamic'), 'SPHEREx archive');
+  assert.equal(modeLabel('dynamic'), 'SPHEREx data');
   assert.equal(modeLabel('local'), 'Local SPHEREx');
 });
 
@@ -376,4 +376,28 @@ test('a failed position check is never described as a calibration problem', () =
     assert.doesNotMatch(view.title, /calibration/i);
   }
   assert.equal(new Set([mapping.title, footprint.title, calibration.title]).size, 3);
+});
+
+test('archive wavelength selection travels in the request and isolates cached pairs', () => {
+  const target = { ra: 12, dec: -8 };
+  const selected = new URL(dynamicBlinkPath(target, 0.1, 1.861), 'http://x');
+  assert.equal(selected.searchParams.get('wavelength_um'), '1.861');
+  assert.equal(new URL(dynamicBlinkPath(target, 0.1), 'http://x').searchParams.has('wavelength_um'), false);
+  assert.notDeepEqual(blinkQueryKey('dynamic', target, 0.1, 'auto', 1.861), blinkQueryKey('dynamic', target, 0.1, 'auto', 4.112));
+  assert.notDeepEqual(blinkQueryKey('dynamic', target, 0.1), blinkQueryKey('dynamic', target, 0.1, 'auto', 1.861));
+  assert.deepEqual(blinkQueryKey('local', target, 256, 'auto', 1.861), blinkQueryKey('local', target, 256, 'auto', 4.112));
+});
+
+test('requested nominal wavelength survives parsing separately from measured frame wavelengths', () => {
+  const value = dynamicPayload();
+  value.requested_wavelength_um = 4.112;
+  assert.equal(parseBlinkResponse(value, resolve).requestedWavelengthUm, 4.112);
+  assert.equal(parseBlinkResponse(dynamicPayload(), resolve).requestedWavelengthUm, undefined);
+});
+
+test('detector is sent to archive API and separates query caches', () => {
+  const target = { ra: 12, dec: -8 };
+  assert.equal(new URL(dynamicBlinkPath(target, 0.1, null, 5), 'http://x').searchParams.get('detector'), '5');
+  assert.notDeepEqual(blinkQueryKey('dynamic', target, 0.1, 'auto', null, 3), blinkQueryKey('dynamic', target, 0.1, 'auto', null, 5));
+  assert.deepEqual(blinkQueryKey('local', target, 256, 'auto', null, 3), blinkQueryKey('local', target, 256, 'auto', null, 5));
 });

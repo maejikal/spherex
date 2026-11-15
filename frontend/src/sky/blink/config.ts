@@ -11,3 +11,13 @@ export const BLINK_DISCLAIMER =
 
 /** Square field of view requested from the archive in dynamic mode (the backend accepts 0.02-0.5 degrees). */
 export const BLINK_DYNAMIC_FOV_DEG = 0.1;
+
+/** Square-field edge lengths, within the archive service's supported 0.02–0.5° range. */
+export const BLINK_FOV_OPTIONS = [
+  { degrees: 0.02, label: '0.02° × 0.02°' },
+  { degrees: 0.05, label: '0.05° × 0.05°' },
+  { degrees: 0.1, label: '0.1° × 0.1°' },
+  { degrees: 0.2, label: '0.2° × 0.2°' },
+  { degrees: 0.3, label: '0.3° × 0.3°' },
+  { degrees: 0.5, label: '0.5° × 0.5°' },
+] as const;

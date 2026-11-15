@@ -375,7 +375,7 @@
 .blink-destination { min-width: 0; overflow-wrap: anywhere; }
 
 /* Short, wide windows put transport beside the image instead of reducing it to a thumbnail. */
-@container blink-body (max-height: 430px) and (min-width: 420px) {
+@container blink-body (max-height: 560px) and (min-width: 420px) {
   .blink-panel--player { display: grid; grid-template-columns: minmax(0, 1fr) 160px; grid-template-rows: auto auto minmax(0, 1fr) auto; }
   .blink-panel--player > * { grid-column: 1 / -1; }
   .blink-panel--player > .blink-stage-area { grid-column: 1; grid-row: 3; align-self: stretch; }
@@ -414,3 +414,18 @@
 .blink-details[open] .blink-coverage-note, .blink-details[open] .blink-note { line-height: 1.6; }
 .blink-details__content .callout p { margin: 0; line-height: 1.6; }
 .blink-details__content .callout p + p { margin-top: 12px; }
+
+
+/* Linked spectral controls stay compact without assuming a minimum panel width. */
+.blink-spectral { min-width: 0; margin: 0; padding: 0; border: 0; }
+.blink-spectral__fields { display: flex; flex-wrap: wrap; gap: 8px; }
+.blink-spectral__fields .field { flex: 1 1 100px; min-width: 0; }
+.blink-spectral__fields .select-input { width: 100%; min-width: 0; min-height: 32px; font-size: 13px; }
+.blink-request { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.blink-request .select-input { width: 100%; min-width: 0; }
+.blink-request > .blink-note { margin: 0; }
+.blink-settings { min-width: 0; }
+.blink-settings > summary { cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 4px 0; }
+.blink-settings[open] > summary { margin-bottom: 8px; }
+/* Keep expanded request controls reachable without pushing playback outside the fixed player. */
+.blink-settings[open] { max-height: min(360px, 45cqh); overflow: auto; padding: 4px; }

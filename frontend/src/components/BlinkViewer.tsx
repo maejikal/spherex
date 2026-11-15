@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, Info, LoaderCircle, MapPin, Pause, Play, RotateCcw, SkipBack, SkipForward, ZoomIn, ZoomOut } from 'lucide-react';
 import { getBlinkCutouts, getBlinkModes, getDynamicBlink } from '../api/client.ts';
 import type { BlinkAnalysis, BlinkFrame, BlinkMode, BlinkModes } from '../api/types.ts';
-import { BLINK_COVERED_REGION, BLINK_CUTOUT_SIZE, BLINK_DISCLAIMER, BLINK_DYNAMIC_FOV_DEG } from '../sky/blink/config.ts';
+import { BLINK_COVERED_REGION, BLINK_CUTOUT_SIZE, BLINK_DISCLAIMER, BLINK_DYNAMIC_FOV_DEG, BLINK_FOV_OPTIONS } from '../sky/blink/config.ts';
 import { blinkQueryKey, modeLabel, resolveBlinkMode } from '../sky/blink/mode.ts';
 import { clockView } from '../sky/blink/timing.ts';
 import { useLoadingRun } from './useLoadingRun.ts';
@@ -22,53 +22,116 @@ import { imageBounds, sharedViewport } from '../sky/blink/viewport.ts';
 import type { PixelBounds } from '../sky/blink/viewport.ts';
 import { formatCoordinate } from '../sky/coordinates.ts';
 import type { SkyCoordinates } from '../sky/coordinates.ts';
+import { allChannels, channelForFrame, channelLabel, formatWavelength } from '../sky/spherex/channels.ts';
+import type { SphereXSurveyInfo } from '../sky/spherex/properties.ts';
 
 interface BlinkViewerProps {
   /** Position captured when the user chose Analyze area; the camera moving afterwards does not change it. */
   target: (SkyCoordinates & { name?: string }) | null;
-  /** `dynamic` asks NASA/IPAC for a wavelength-matched pair at the target; `local` uses the configured local SPHEREx FITS pairs. */
+  /** Verified combined-cube metadata supplies nominal wavelengths, not archive coverage. */
+  survey?: SphereXSurveyInfo;
+  surveyError?: boolean;
+  onRetrySurvey?: () => void;
+  /** `dynamic` discovers archive observations; `local` uses configured fixed FITS pairs. */
   mode: BlinkMode;
   onModeChange: (mode: BlinkMode) => void;
   onFlagForReview: (analysis: BlinkAnalysis) => void;
   onGoToCoveredRegion: (coordinates: SkyCoordinates, label: string) => void;
 }
 
-export function BlinkViewer({ target, mode, onModeChange, onGoToCoveredRegion, onFlagForReview }: BlinkViewerProps) {
+export function BlinkViewer({ target, mode, onModeChange, onGoToCoveredRegion, onFlagForReview, survey, surveyError, onRetrySurvey }: BlinkViewerProps) {
   const modes = useQuery({ queryKey: ['blink', 'modes'], queryFn: ({ signal }) => getBlinkModes(signal), staleTime: 5 * 60_000, retry: false });
   const active = resolveBlinkMode(mode, modes.data);
+  // Blink selection is independent of the moving sky camera and its combined-cube channel.
+  const [channel, setChannel] = useState<number | null>(null);
+  const selected = survey && channel !== null ? channelForFrame(survey, channel) : null;
+  const wavelengthUm = active === 'dynamic' ? selected?.wavelengthUm ?? null : null;
+  const [detector, setDetector] = useState<number | null>(null);
+  const [fovDeg, setFovDeg] = useState(BLINK_DYNAMIC_FOV_DEG);
+  // Draft controls never trigger archive work. Only an explicit submit captures a request.
+  const [submitted, setSubmitted] = useState<{
+    target: NonNullable<BlinkViewerProps['target']>;
+    mode: BlinkMode;
+    fovDeg: number;
+    wavelengthUm: number | null;
+    detector: number | null;
+  } | null>(null);
+  // A new Analyze action supplies a new captured target, even at the same coordinates.
+  const request = submitted?.target === target && submitted?.mode === active ? submitted : null;
+  const dirty = !request || (active === 'dynamic' && (request.fovDeg !== fovDeg || request.wavelengthUm !== wavelengthUm || request.detector !== detector));
   useEffect(() => {
     if (active !== mode) onModeChange(active); // e.g. the server has archive mode switched off
   }, [active, mode, onModeChange]);
 
-  // The query key is the analysed position and mode, so a newer analysis can never show an older response.
+  // Submitted position, mode, FOV and wavelength isolate caches and stale responses.
   const query = useQuery({
-    queryKey: blinkQueryKey(active, target, active === 'dynamic' ? BLINK_DYNAMIC_FOV_DEG : BLINK_CUTOUT_SIZE),
-    queryFn: ({ signal }) => (active === 'dynamic'
-      ? getDynamicBlink(target!, BLINK_DYNAMIC_FOV_DEG, signal)
-      : getBlinkCutouts(target!, BLINK_CUTOUT_SIZE, signal)),
-    enabled: Boolean(target),
+    queryKey: request ? blinkQueryKey(request.mode, request.target, request.mode === 'dynamic' ? request.fovDeg : BLINK_CUTOUT_SIZE, 'auto', request.wavelengthUm, request.detector) : ['blink', 'unsubmitted'],
+    queryFn: ({ signal }) => {
+      if (!request) throw new Error('Choose Load observations before requesting a blink pair.');
+      return request.mode === 'dynamic'
+        ? getDynamicBlink(request.target, request.fovDeg, signal, request.wavelengthUm, request.detector)
+        : getBlinkCutouts(request.target, BLINK_CUTOUT_SIZE, signal);
+    },
+    enabled: Boolean(request),
     staleTime: 5 * 60_000,
     retry: false,
   });
 
-  const loading = Boolean(target) && !query.data && query.isFetching;
-  const run = useLoadingRun({ loading, succeeded: Boolean(query.data), mode: active, requestKey: `${active}|${target?.ra}|${target?.dec}` });
+  const loading = Boolean(request) && !query.data && query.isFetching;
+  const run = useLoadingRun({ loading, succeeded: Boolean(request && query.data), mode: active, requestKey: JSON.stringify(request && [request.mode, request.target.ra, request.target.dec, request.fovDeg, request.wavelengthUm, request.detector]) });
 
   if (!target) {
     return <div className="blink-panel"><p className="blink-note">Select a position and choose Analyze area to compare SPHEREx observations.</p></div>;
   }
 
   const position = `RA ${formatCoordinate(target.ra, 5)}°, Dec ${target.dec >= 0 ? '+' : ''}${formatCoordinate(target.dec, 5)}°`;
+  const requestControls = (
+    <form className="blink-request" onSubmit={(event) => {
+      event.preventDefault();
+      if (dirty) setSubmitted({ target, mode: active, fovDeg, wavelengthUm, detector });
+    }}>
+      {active === 'dynamic'
+        ? <>
+          <label className="field">
+            <span>Detector</span>
+            <select className="select-input" aria-label="Detector" title="Physical detector, independent of nominal cube channel. Both filters must match the archive observations." value={detector ?? ''} onChange={(event) => setDetector(event.target.value === '' ? null : Number(event.target.value))}>
+              <option value="">Automatic</option>
+              {[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>Detector {value}</option>)}
+            </select>
+          </label>
+          <BlinkSpectralControls survey={survey} frame={selected?.frame ?? null} metadataError={surveyError} onRetry={onRetrySurvey} onChange={setChannel} />
+          <label className="field">
+            <span>Field of view · degrees</span>
+            <select className="select-input" aria-label="Field of view" value={fovDeg} onChange={(event) => setFovDeg(Number(event.target.value))}>
+              {BLINK_FOV_OPTIONS.map((option) => <option key={option.degrees} value={option.degrees}>{option.label}</option>)}
+            </select>
+          </label>
+        </>
+        : <p className="blink-note">Fixed local FITS pair · {BLINK_CUTOUT_SIZE} × {BLINK_CUTOUT_SIZE} pixels.</p>}
+      <div className="button-row">
+        <button className="button button--primary" type="submit" disabled={!dirty}>
+          {query.isFetching && !dirty ? 'Loading…' : 'Load observations'}
+        </button>
+        {request && dirty && <span className="blink-note" role="status">Selection changed. Load observations to apply.</span>}
+      </div>
+    </form>
+  );
   const switcher = (
     <>
     <BlinkDestination target={target} />
-    <ModeSwitch
-      mode={active}
-      modes={modes.data}
-      onChange={onModeChange}
-    />
+    <ModeSwitch mode={active} modes={modes.data} onChange={onModeChange} />
+    {query.data && request
+      ? <details className="blink-settings">
+          <summary>Observation settings{active === 'dynamic' ? ` · Requested ${request.fovDeg}° field` : ''}{dirty ? ' · Changes not loaded' : ''}</summary>
+          {requestControls}
+        </details>
+      : requestControls}
     </>
   );
+
+  if (!request) {
+    return <div className="blink-panel">{switcher}</div>;
+  }
 
   if (query.data) {
     return <BlinkPlayer key={query.data.frames.map((frame) => frame.imageUrl).join('|')} analysis={query.data} switcher={switcher} onFlagForReview={onFlagForReview} />;
@@ -120,6 +183,44 @@ export function BlinkViewer({ target, mode, onModeChange, onGoToCoveredRegion, o
       </div>
       <p className="blink-note">{BLINK_DISCLAIMER}</p>
     </div>
+  );
+}
+
+/** Both selectors address the same verified nominal channel, not independent spectral settings. */
+export function BlinkSpectralControls({ survey, frame, metadataError, onRetry, onChange }: {
+  survey?: SphereXSurveyInfo;
+  frame: number | null;
+  metadataError?: boolean;
+  onRetry?: () => void;
+  onChange: (frame: number | null) => void;
+}) {
+  if (!survey) return (
+    <div className="blink-note" role="status">
+      {metadataError ? 'Channel list unavailable. ' : 'Reading channel list… '}
+      Automatic wavelength selection remains available.
+      {metadataError && onRetry && <button className="button button--quiet" type="button" onClick={onRetry}>Retry channel list</button>}
+    </div>
+  );
+  const channels = allChannels(survey);
+  return (
+    <fieldset className="blink-spectral" aria-label="Blink spectral selection" title="Nominal cube channels guide archive selection. Actual wavelengths vary; both observations must include the selected wavelength at the target.">
+      <div className="blink-spectral__fields">
+        <label className="field">
+          <span>Channel</span>
+          <select className="select-input" value={frame ?? ''} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))}>
+            <option value="">Automatic</option>
+            {channels.map((item) => <option key={item.frame} value={item.frame}>{channelLabel(item)}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span>Wavelength</span>
+          <select className="select-input" value={frame ?? ''} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))}>
+            <option value="">Automatic</option>
+            {channels.map((item) => <option key={item.frame} value={item.frame}>{formatWavelength(item.wavelengthUm)}</option>)}
+          </select>
+        </label>
+      </div>
+    </fieldset>
   );
 }
 
@@ -204,11 +305,11 @@ export function BlinkPlayer({ analysis, switcher, onFlagForReview }: { analysis:
   const fitted = sharedViewport(analysis.frames.map((frame) => bounds[frame.id] ?? null), analysis.imageSize);
   const cropped = fitData && ready && (fitted.width < analysis.imageSize || fitted.height < analysis.imageSize);
   const viewport = cropped ? fitted : { x: 0, y: 0, width: analysis.imageSize, height: analysis.imageSize };
-  const visibleWidth = analysis.fieldOfViewArcmin * viewport.width / analysis.imageSize / zoom;
-  const visibleHeight = analysis.fieldOfViewArcmin * viewport.height / analysis.imageSize / zoom;
+  const visibleWidth = (analysis.fieldOfViewArcmin / 60) * viewport.width / analysis.imageSize / zoom;
+  const visibleHeight = (analysis.fieldOfViewArcmin / 60) * viewport.height / analysis.imageSize / zoom;
   const visibleField = viewport.width === viewport.height
-    ? `${visibleWidth.toFixed(1)}′`
-    : `${visibleWidth.toFixed(1)}′ × ${visibleHeight.toFixed(1)}′`;
+    ? `${visibleWidth.toPrecision(3)}°`
+    : `${visibleWidth.toPrecision(3)}° × ${visibleHeight.toPrecision(3)}°`;
 
   // One interval exists only while playing with both images ready; changing speed replaces it, and it is
   // always cleared on pause, on unmount, and when the frame count changes.
@@ -377,10 +478,11 @@ export function BlinkPlayer({ analysis, switcher, onFlagForReview }: { analysis:
               {active.obsid && <div><dt>Observation ID</dt><dd>{active.obsid}</dd></div>}
               <div><dt>Usable data</dt><dd>{Math.round(active.coverageFraction * 100)}%</dd></div>
               {active.wavelengthUm && <div><dt>Wavelength here</dt><dd>{analysis.mode === 'dynamic' ? `${active.wavelengthUm.mean.toFixed(4)} µm` : `${active.wavelengthUm.mean.toFixed(2)} µm`}{active.bandwidthUm !== undefined && ` ± ${(active.bandwidthUm * 500).toFixed(0)} nm`}</dd></div>}
+              {analysis.requestedWavelengthUm !== undefined && <div><dt>Requested wavelength</dt><dd>{formatWavelength(analysis.requestedWavelengthUm)}</dd></div>}
               {analysis.selection && <div><dt>Wavelength gap</dt><dd>{analysis.selection.actualGapNm.toFixed(1)} nm ({Math.round(analysis.selection.actualGapOverBandwidth * 100)}% of bandwidth)</dd></div>}
               {active.geometricCoverage !== undefined && <div><dt>On detector</dt><dd>{Math.round(active.geometricCoverage * 100)}%</dd></div>}
               {active.suspectFraction !== undefined && <div><dt>Caution flags</dt><dd>{Math.round(active.suspectFraction * 100)}% of usable px</dd></div>}
-              <div><dt>Full field</dt><dd>{analysis.fieldOfViewArcmin.toFixed(1)}′ · {analysis.pixelScaleArcsec}″/px{analysis.rotationDeg ? ` · rotated ${analysis.rotationDeg}°` : ''}</dd></div>
+              <div><dt>Full field</dt><dd>{(analysis.fieldOfViewArcmin / 60).toPrecision(3)}° · {analysis.pixelScaleArcsec}″/px{analysis.rotationDeg ? ` · rotated ${analysis.rotationDeg}°` : ''}</dd></div>
               {analysis.provenance && <div className="blink-meta__wide"><dt>Source</dt><dd>{analysis.provenance.source} · {analysis.provenance.collection} · {analysis.provenance.release}</dd></div>}
             </dl>
             <p className="blink-note">{BLINK_DISCLAIMER}</p>

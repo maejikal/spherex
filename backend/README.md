@@ -29,7 +29,7 @@ Configuration is via `SKY_*` environment variables or `backend/.env` (see `.env.
 | `GET /api/targets/suggested` | Barnard's Star, Epsilon Indi B, WISE 0855-0714, RW Aurigae, R Draconis, M31, M42. |
 | `GET /api/targets/random` | One of 40 tile-verified positions drawn uniformly on the sphere; never the same twice in a row. |
 | `GET /api/blink/cutouts?ra=&dec=&size=256` | Aligned May/December SPHEREx cutouts of one position from the two local FITS files (see "Blink viewer"). `size` 32-512 px. |
-| `GET /api/blink/dynamic?ra=&dec=&fov_deg=0.1` | **Archive mode.** Discovers SPHEREx DR1 observations at any position through NASA/IPAC IRSA, picks a wavelength-matched two-epoch pair, downloads cutouts, verifies the exact wavelength, and returns aligned frames + provenance. `fov_deg` 0.02-0.5. See "Dynamic blink". |
+| `GET /api/blink/dynamic?ra=&dec=&fov_deg=0.1&wavelength_um=` | **Archive mode.** Discovers SPHEREx DR1 observations at any position through NASA/IPAC IRSA, picks a wavelength-matched two-epoch pair, downloads cutouts, verifies the exact wavelength, and returns aligned frames + provenance. `fov_deg` 0.02-0.5. See "Dynamic blink". |
 | `GET /api/blink/dynamic/images/{frame_id}.png?ra=&dec=&fov_deg=` | PNG for one archive frame (URLs come from the endpoint above). |
 | `GET /api/blink/modes` | `{dynamic_enabled, local_demo_available}`: which blink modes this server offers. |
 | `GET /api/blink/images/{frame_id}.png?ra=&dec=&size=` | The PNG for one frame (`image/png`, grey + alpha, north up, east left). URLs come from `/blink/cutouts`. |
@@ -135,6 +135,12 @@ position, size and file signatures.
 
 `GET /api/blink/dynamic` builds a two-epoch blink for any position the archive covers. Nothing is hard-coded to a target.
 
+**Detector selection.** Optional `detector` (integer 1–6) restricts discovery results to that physical detector before calibration and pairing. Omit for automatic selection. Detector and nominal cube channel are independent: both detector and wavelength constraints must pass. No observations for the selected detector returns `no_observations`, never another detector. Response `requested_detector`, PNG URLs, and analysis cache keys preserve the selection, including cached-only recovery.
+
+**Spectral selection.** Optional `wavelength_um` (0.75–5.0 µm) requests a nominal wavelength; omit it for the existing automatic pair selection. Candidate pairs still pass all wavelength-gap, epoch, coverage and quality gates. Predicted passband proximity prioritises candidates; acceptance requires the requested wavelength to lie within each frame's FITS-calibrated central wavelength ± half its bandwidth **at the target**, not across every pixel. The bounded candidate search can return `wavelength_mismatch`; it never silently falls back to a different wavelength. This is not a monochromatic cutout or a time slice of the combined HiPS cube. [IRSA documents the per-pixel central wavelength and bandwidth in WCS-WAVE](https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-products/).
+
+The response records `requested_wavelength_um`; generated PNG URLs and analysis cache keys include it, preventing same-month frames from different spectral selections colliding. Cached-only recovery applies the same requested-wavelength check.
+
 **Why wavelength matters.** SPHEREx uses linear variable filters: the central wavelength at a pixel depends on where on the detector the
 position fell, so two exposures of one field can sample different wavelengths and produce false "variability". The pipeline therefore
 selects pairs by wavelength and re-checks the exact wavelength from the downloaded FITS before accepting a pair.
@@ -164,7 +170,8 @@ selects pairs by wavelength and re-checks the exact wavelength from the download
 6. **Reprojection** reuses the tested mask-aware bilinear resampler (SIP-aware `all_world2pix`) onto one shared TAN grid (odd size, target on the centre pixel, optional rotation).
    Only NONFUNC and MISSING_DATA flags are excluded; all other flags remain visible.
    Non-finite science/variance and non-positive variance are still excluded. Caution flags
-   (OVERFLOW, TRANSIENT, PERSIST, OUTLIER, HALO) are kept and reported; **SOURCE and FULLSAMPLE are never masked**. Flag bitmasks are sampled nearest-neighbour, never interpolated.
+   (OVERFLOW, TRANSIENT, PERSIST, OUTLIER, HALO, DICHROIC, PHANMISS, CROSSTALK, GHOST, GHOST_FPA, GHOST_EXT)
+   are kept and reported; **SOURCE and FULLSAMPLE are never masked**. Flag bitmasks are sampled nearest-neighbour, never interpolated.
    Display scaling is the same additive-background + shared asinh stretch as the local mode; calibrated values are not modified.
 
 ### Cached views during IRSA outages

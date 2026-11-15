@@ -10,11 +10,11 @@ export function resolveBlinkMode(requested: BlinkMode, modes: BlinkModes | undef
 }
 
 export function modeLabel(mode: BlinkMode): string {
-  return mode === 'dynamic' ? 'SPHEREx archive' : 'Local SPHEREx';
+  return mode === 'dynamic' ? 'SPHEREx data' : 'Local SPHEREx';
 }
 
-/** Query key: the analysed position, the mode and (for the archive) the field of view, so nothing stale is ever shown. */
-export function blinkQueryKey(mode: BlinkMode, target: { ra: number; dec: number } | null, size: number, localProfileId = 'auto'): readonly unknown[] {
+/** Archive cache identity includes field of view and requested wavelength; local identity includes the fixed FITS profile. */
+export function blinkQueryKey(mode: BlinkMode, target: { ra: number; dec: number } | null, size: number, localProfileId = 'auto', wavelengthUm: number | null = null, detector: number | null = null): readonly unknown[] {
   const key = ['blink', mode, target?.ra, target?.dec, size];
-  return mode === 'local' ? [...key, localProfileId] : key;
+  return mode === 'local' ? [...key, localProfileId] : [...key, wavelengthUm, detector];
 }
