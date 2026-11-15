@@ -61,3 +61,13 @@ test('closing a compact tool does not reopen another tool', () => {
   const panels = { find: false, view: true, inspect: false };
   assert.deepEqual(togglePanel(panels, 'view', true), { find: false, view: false, inspect: false });
 });
+
+import { keyboardMoveDelta } from '../src/state/windows.ts';
+
+test('keyboard move: arrow keys step 8 px (24 with Shift); any other key does nothing', () => {
+  assert.deepEqual(keyboardMoveDelta('ArrowLeft', false), { x: -8, y: 0 });
+  assert.deepEqual(keyboardMoveDelta('ArrowRight', false), { x: 8, y: 0 });
+  assert.deepEqual(keyboardMoveDelta('ArrowUp', false), { x: 0, y: -8 });
+  assert.deepEqual(keyboardMoveDelta('ArrowDown', true), { x: 0, y: 24 });
+  for (const key of ['Enter', ' ', 'Tab', 'Escape', 'a', 'Home']) assert.equal(keyboardMoveDelta(key, false), null, key);
+});

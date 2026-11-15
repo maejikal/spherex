@@ -80,3 +80,15 @@ export function panelsForAnalysis(panels: PanelVisibility, compact: boolean): Pa
 export function orderForAnalysis(order: readonly WindowId[], compact: boolean): WindowId[] {
   return raise(compact ? order : raise(order, 'inspect'), 'blink');
 }
+
+/** Keyboard window movement: the pixel step for an arrow key (larger with Shift), or null for any other key. */
+export function keyboardMoveDelta(key: string, shift: boolean): { x: number; y: number } | null {
+  const step = shift ? 24 : 8;
+  switch (key) {
+    case 'ArrowUp': return { x: 0, y: -step };
+    case 'ArrowDown': return { x: 0, y: step };
+    case 'ArrowLeft': return { x: -step, y: 0 };
+    case 'ArrowRight': return { x: step, y: 0 };
+    default: return null;
+  }
+}

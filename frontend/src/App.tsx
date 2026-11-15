@@ -446,6 +446,7 @@ export default function App() {
           placement="left-of"
           anchorId="inspect"
           movable={!compact}
+          keyboardMove="header"
           workspaceRef={workspaceRef}
           onClose={() => setBlinkOpen(false)}
         >

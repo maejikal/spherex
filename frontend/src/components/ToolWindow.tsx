@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { Move, X } from 'lucide-react';
-import { initialPosition } from '../state/windows.ts';
+import { initialPosition, keyboardMoveDelta } from '../state/windows.ts';
 import type { Placement } from '../state/windows.ts';
 
 interface ToolWindowProps {
@@ -12,6 +12,12 @@ interface ToolWindowProps {
   placement: Placement;
   /** Docked panels and mobile sheets retain content and floating position, but cannot be moved. */
   movable?: boolean;
+  /**
+   * How keyboard users move the window. `button` (default): a visible Move button toggles arrow-key movement.
+   * `header`: no visible control; the focusable title bar does the same (Space/Enter, then arrows, Escape to stop).
+   * Pointer dragging works from the header either way.
+   */
+  keyboardMove?: 'button' | 'header';
   /** For `placement="beside"` / `"left-of"`: id of the window to sit next to on first open. */
   anchorId?: string;
   /** Stacking value from the app's window order; a pointer-down on the window raises it. */
@@ -34,6 +40,7 @@ export function ToolWindow({
   open,
   placement,
   movable = true,
+  keyboardMove: keyboardMoveMode = 'button',
   anchorId,
   zIndex,
   onFocus,
@@ -100,6 +107,22 @@ export function ToolWindow({
     setPosition(clampPosition({ x: position.x + dx, y: position.y + dy }, workspace, panel));
   };
 
+  /** Arrow keys move the window while keyboard-move mode is on; Escape leaves it. Shared by both modes. */
+  const onMoveKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape' && keyboardMove) {
+      event.preventDefault();
+      setKeyboardMove(false);
+      return;
+    }
+    if (!keyboardMove) return;
+    const delta = keyboardMoveDelta(event.key, event.shiftKey);
+    if (delta) {
+      event.preventDefault();
+      moveBy(delta.x, delta.y);
+    }
+  };
+  const headerKeyboard = movable && keyboardMoveMode === 'header';
+
   return (
     <aside
       id={id}
@@ -118,7 +141,22 @@ export function ToolWindow({
       onFocusCapture={onFocus}
     >
       <header
-        className="tool-window__header"
+        className={`tool-window__header${headerKeyboard && keyboardMove ? ' tool-window__header--moving' : ''}`}
+        {...(headerKeyboard ? {
+          tabIndex: 0,
+          'aria-label': `${title} window title bar. Press Space to move it with the arrow keys; Escape to stop.`,
+          'aria-description': keyboardMove ? 'Moving: use the arrow keys, Shift for larger steps, Escape to stop' : undefined,
+          onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+            if (event.target !== event.currentTarget) return; // keys pressed on the buttons inside the header stay theirs
+            if ((event.key === ' ' || event.key === 'Enter') && !keyboardMove) {
+              event.preventDefault();
+              setKeyboardMove(true);
+              return;
+            }
+            onMoveKeyDown(event);
+          },
+          onBlur: (event: React.FocusEvent<HTMLElement>) => { if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardMove(false); },
+        } : {})}
         onPointerDown={(event) => {
           if (!movable || (event.target as HTMLElement).closest('button')) return;
           const node = panelRef.current;
@@ -159,33 +197,14 @@ export function ToolWindow({
           <h2>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        {movable && <button
+        {movable && keyboardMoveMode === 'button' && <button
           className="button button--quiet button--compact tool-window__move"
           type="button"
           aria-label={`Move ${title} window`}
           aria-pressed={keyboardMove}
           title="Press Space to move with arrow keys; press Escape to stop"
           onClick={() => setKeyboardMove((current) => !current)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape' && keyboardMove) {
-              event.preventDefault();
-              setKeyboardMove(false);
-              return;
-            }
-            if (!keyboardMove) return;
-            const step = event.shiftKey ? 24 : 8;
-            const movement: Record<string, Position> = {
-              ArrowUp: { x: 0, y: -step },
-              ArrowDown: { x: 0, y: step },
-              ArrowLeft: { x: -step, y: 0 },
-              ArrowRight: { x: step, y: 0 },
-            };
-            const delta = movement[event.key];
-            if (delta) {
-              event.preventDefault();
-              moveBy(delta.x, delta.y);
-            }
-          }}
+          onKeyDown={onMoveKeyDown}
         >
           <Move aria-hidden="true" size={14} />
           <span>{keyboardMove ? 'Moving' : 'Move'}</span>
