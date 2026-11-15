@@ -38,7 +38,7 @@ export default function App() {
 
   const workspaceRef = useRef<HTMLDivElement>(null);
   // Presentation only: switching layouts never replaces the viewer or its celestial state.
-  const [layout, setLayout] = useState<'floating' | 'docked'>('floating');
+  const [layout, setLayout] = useState<'floating' | 'docked'>('docked');
   const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 760px)').matches);
   const movableTools = layout === 'floating' && !compact;
   const [homeView, setHomeView] = useState<ExplorerView | null>(null);
