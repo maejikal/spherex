@@ -305,16 +305,18 @@ export default function App() {
         <span className="survey-badge">SPHEREx DR1</span>
         <div className="topbar__spacer" />
         {!compact && (
-          <fieldset className="layout-switch">
-            <legend className="sr-only">Workspace layout</legend>
-            <span className="layout-switch__label" aria-hidden="true">Layout</span>
-            {(['floating', 'docked'] as const).map((value) => (
-              <label key={value} className={`layout-choice${layout === value ? ' layout-choice--active' : ''}`}>
-                <input type="radio" name="workspace-layout" value={value} checked={layout === value} onChange={() => setLayout(value)} />
-                <span>{value === 'floating' ? 'Floating' : 'Docked'}</span>
-              </label>
-            ))}
-          </fieldset>
+          <div className="layout-switch-group">
+            <span id="layout-switch-label" className="layout-switch__label">Panel layout</span>
+            <fieldset className="layout-switch" aria-labelledby="layout-switch-label">
+              <legend className="sr-only">Panel layout</legend>
+              {(['floating', 'docked'] as const).map((value) => (
+                <label key={value} className={`layout-choice${layout === value ? ' layout-choice--active' : ''}`}>
+                  <input type="radio" name="workspace-layout" value={value} checked={layout === value} onChange={() => setLayout(value)} />
+                  <span>{value === 'floating' ? 'Floating' : 'Docked'}</span>
+                </label>
+              ))}
+            </fieldset>
+          </div>
         )}
         <div className="tool-toolbar" role="group" aria-label="Explorer tools">
           <ToolbarButton id="find" label="Find" active={panels.find} onClick={() => togglePanel('find')}><Search size={16} aria-hidden="true" /></ToolbarButton>
