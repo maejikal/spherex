@@ -1,5 +1,5 @@
 import { ConstellationCard, type ConstellationCardProps } from './ConstellationCard.tsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
@@ -21,7 +21,10 @@ import { findNearbyObjects, getRandomTarget, listSuggestedTargets, resolveObject
 import type { CatalogObject, ExplorerView } from '../api/types.ts';
 import type { SkyCoordinates } from '../sky/coordinates.ts';
 import { calculateFieldOfView, formatCoordinate, parseCoordinateInput } from '../sky/coordinates.ts';
-import { channelForFrame, channelLabel, formatWavelength } from '../sky/spherex/channels.ts';
+import { draftFromView, editDraft, followView, syncDraft } from '../state/coordinateDraft.ts';
+import { isAbortError } from '../state/navigationGuard.ts';
+import type { NavigationGuard, NavigationTicket } from '../state/navigationGuard.ts';
+import { channelForFrame, channelLabel, formatWavelength, resolveFrame } from '../sky/spherex/channels.ts';
 import { SPHEREX_HIPS_URL } from '../sky/spherex/config.ts';
 import type { SphereXSurveyInfo } from '../sky/spherex/properties.ts';
 import { WavelengthSelector } from './WavelengthSelector.tsx';
@@ -29,22 +32,23 @@ import { WavelengthSelector } from './WavelengthSelector.tsx';
 interface FindPanelProps {
   view: ExplorerView | null;
   onNavigate: (coordinates: SkyCoordinates, label?: string) => void;
+  /** Shared with the app: every navigation supersedes a name/random lookup that is still pending. */
+  navigationGuard: NavigationGuard;
+  /** Changes on every explicit navigation or reset; the RA/Dec fields then show the new position. */
+  syncRevision: number;
 }
 
-export function FindPanel({ view, onNavigate }: FindPanelProps) {
+export function FindPanel({ view, onNavigate, navigationGuard, syncRevision }: FindPanelProps) {
   const [objectName, setObjectName] = useState('');
-  const [raText, setRaText] = useState('');
-  const [decText, setDecText] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [draft, setDraft] = useState(() => draftFromView(view));
   const [coordinateError, setCoordinateError] = useState<string | null>(null);
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
+  // Viewer movement updates the fields only while the user is not editing them (BUG-008).
   useEffect(() => {
-    if (!view) {
-      setRaText('');
-      setDecText('');
-      return;
-    }
-    setRaText(String(view.ra));
-    setDecText(String(view.dec));
+    setDraft((current) => followView(current, viewRef.current));
   }, [view?.ra, view?.dec]);
 
   const targets = useQuery({
@@ -54,25 +58,69 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
     retry: false,
   });
 
+  // Each lookup carries a ticket; only a lookup that is still the newest navigation may move the view.
   const resolveMutation = useMutation({
-    mutationFn: (name: string) => resolveObjectName(name),
-    onSuccess: (object) => onNavigate(object, object.name),
+    mutationFn: ({ name, ticket }: { name: string; ticket: NavigationTicket }) => resolveObjectName(name, ticket.signal),
+    onSuccess: (object, { ticket }) => { if (ticket.isCurrent()) onNavigate(object, object.name); },
   });
   const randomMutation = useMutation({
-    mutationFn: () => getRandomTarget(),
-    onSuccess: (target) => onNavigate(target, target.name),
+    mutationFn: ({ ticket }: { ticket: NavigationTicket }) => getRandomTarget(ticket.signal),
+    onSuccess: (target, { ticket }) => { if (ticket.isCurrent()) onNavigate(target, target.name); },
   });
+  const { reset: resetResolve } = resolveMutation;
+  const { reset: resetRandom } = randomMutation;
+
+  // An explicit navigation (from here or elsewhere) shows the new position and clears obsolete errors.
+  useEffect(() => {
+    setDraft(syncDraft(viewRef.current));
+    setCoordinateError(null);
+  }, [syncRevision]);
+
+  const lookupActive = (variables: { ticket: NavigationTicket } | undefined) => Boolean(variables?.ticket.isCurrent());
+  const resolvePending = resolveMutation.isPending && lookupActive(resolveMutation.variables);
+  const randomPending = randomMutation.isPending && lookupActive(randomMutation.variables);
+  const resolveFailure = resolveMutation.isError && !isAbortError(resolveMutation.error) && lookupActive(resolveMutation.variables)
+    ? errorMessage(resolveMutation.error, 'Name resolver failed.')
+    : null;
+  const randomFailure = randomMutation.isError && !isAbortError(randomMutation.error) && lookupActive(randomMutation.variables)
+    ? errorMessage(randomMutation.error, 'No verified covered position was returned.')
+    : null;
 
   const resolveName = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const requestedName = objectName.trim();
-    if (requestedName) resolveMutation.mutate(requestedName);
+    resetRandom();
+    if (!requestedName) {
+      resetResolve();
+      setNameError('Enter an object name to search.');
+      return;
+    }
+    setNameError(null);
+    resolveMutation.mutate({ name: requestedName, ticket: navigationGuard.begin() });
+  };
+
+  const findRandom = () => {
+    resetResolve();
+    setNameError(null);
+    randomMutation.mutate({ ticket: navigationGuard.begin() });
+  };
+
+  const editName = (value: string) => {
+    setObjectName(value);
+    // The previous message described a different name.
+    setNameError(null);
+    if (!resolveMutation.isPending) resetResolve();
+  };
+
+  const editCoordinate = (field: 'ra' | 'dec', value: string) => {
+    setDraft((current) => editDraft(current, field, value));
+    setCoordinateError(null);
   };
 
   const submitCoordinates = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setCoordinateError(null);
-    const result = parseCoordinateInput(raText, decText);
+    const result = parseCoordinateInput(draft.ra, draft.dec);
     if (!result.ok || !result.value) {
       setCoordinateError(result.error ?? 'Enter valid ICRS coordinates.');
       return;
@@ -83,7 +131,7 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
   return (
     <div className="panel-stack find-panel-stack">
       <section className="panel-section find-name-section" aria-label="Find by object name">
-        <form className="find-name-form" onSubmit={resolveName}>
+        <form className="find-name-form" onSubmit={resolveName} onInvalidCapture={() => { setNameError(null); if (!resolveMutation.isPending) resetResolve(); }}>
           <div className="field find-name-field">
             <label className="sr-only" htmlFor="find-object-name">Object name</label>
             <div className="find-name-control">
@@ -93,19 +141,20 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
                   id="find-object-name"
                   type="search"
                   value={objectName}
-                  onChange={(event) => setObjectName(event.target.value)}
+                  onChange={(event) => editName(event.target.value)}
                   placeholder="Object name · e.g. M31"
                   autoComplete="off"
                   required
                 />
               </div>
-              <button className="button button--secondary" type="submit" disabled={resolveMutation.isPending}>
-                {resolveMutation.isPending ? <LoaderCircle className="spin" aria-hidden="true" size={15} /> : null}
-                {resolveMutation.isPending ? 'Finding…' : 'Find'}
+              {/* Stays enabled while a lookup runs: a new search supersedes it. */}
+              <button className="button button--secondary" type="submit" aria-busy={resolvePending}>
+                {resolvePending ? <LoaderCircle className="spin" aria-hidden="true" size={15} /> : null}
+                {resolvePending ? 'Finding…' : 'Find'}
               </button>
             </div>
           </div>
-          {resolveMutation.isError && <InlineError message={errorMessage(resolveMutation.error, 'Name resolver failed.')} />}
+          {(nameError ?? resolveFailure) && <InlineError message={(nameError ?? resolveFailure)!} />}
         </form>
       </section>
 
@@ -115,7 +164,8 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
         <div className="find-section-heading">
           <h3 id="find-coordinates-heading">Go to coordinates</h3>
         </div>
-        <form className="form-stack find-coordinate-form" onSubmit={submitCoordinates}>
+        {/* Native range checks run first; an invalid submit must not leave an older message beside the browser's. */}
+        <form className="form-stack find-coordinate-form" onSubmit={submitCoordinates} onInvalidCapture={() => setCoordinateError(null)}>
           <div className="coordinate-fields">
             <label className="field">
               <span>RA · degrees</span>
@@ -125,8 +175,8 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
                 min="0"
                 max="359.999999999"
                 step="any"
-                value={raText}
-                onChange={(event) => setRaText(event.target.value)}
+                value={draft.ra}
+                onChange={(event) => editCoordinate('ra', event.target.value)}
                 placeholder="0 to <360"
                 aria-describedby={coordinateError ? 'coordinate-error' : undefined}
               />
@@ -139,8 +189,8 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
                 min="-90"
                 max="90"
                 step="any"
-                value={decText}
-                onChange={(event) => setDecText(event.target.value)}
+                value={draft.dec}
+                onChange={(event) => editCoordinate('dec', event.target.value)}
                 placeholder="−90 to +90"
                 aria-describedby={coordinateError ? 'coordinate-error' : undefined}
               />
@@ -157,10 +207,10 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
           <button
             className="text-button find-random"
             type="button"
-            onClick={() => randomMutation.mutate()}
-            disabled={randomMutation.isPending}
+            onClick={findRandom}
+            disabled={randomPending}
           >
-            {randomMutation.isPending ? 'Finding…' : 'Random'}
+            {randomPending ? 'Finding…' : 'Random'}
           </button>
         </div>
         {targets.isPending && (
@@ -192,7 +242,7 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
             ))}
           </ul>
         )}
-        {randomMutation.isError && <InlineError message={errorMessage(randomMutation.error, 'No verified covered position was returned.')} />}
+        {randomFailure && <InlineError message={randomFailure} />}
       </section>
     </div>
   );
@@ -327,7 +377,7 @@ export function InspectPanel({ constellation, selection, view, survey, loading, 
     }
   };
 
-  const frame = view && survey ? (view.channel ?? survey.firstFrame) : null;
+  const frame = view && survey ? resolveFrame(survey, view.channel) : null;
   const channel = survey && frame !== null ? channelForFrame(survey, frame) : null;
 
   return (

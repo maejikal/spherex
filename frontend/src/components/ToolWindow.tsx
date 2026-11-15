@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Move, X } from 'lucide-react';
-import { initialPosition, keyboardMoveDelta } from '../state/windows.ts';
-import type { Placement } from '../state/windows.ts';
+import { clampToArea, initialPosition, keyboardMoveDelta, placeAvoiding } from '../state/windows.ts';
+import type { Box, Placement } from '../state/windows.ts';
 
 interface ToolWindowProps {
   id: string;
@@ -20,7 +20,14 @@ interface ToolWindowProps {
   keyboardMove?: 'button' | 'header';
   /** For `placement="beside"` / `"left-of"`: id of the window to sit next to on first open. */
   anchorId?: string;
-  /** Stacking value from the app's window order; a pointer-down on the window raises it. */
+  /**
+   * Element (by id) that confines a movable window instead of the whole workspace. The docked Blink Viewer
+   * uses the sky viewer so it never covers the docked Find/View/Inspect cards; it also caps the window's size.
+   */
+  boundsId?: string;
+  /** Windows (by id) this one should not cover when it is first placed, above all their title bars. */
+  avoidIds?: readonly string[];
+  /** Stacking value from the app's window order; a pointer-down on the window raises it. Applies docked too. */
   zIndex?: number;
   onFocus?: () => void;
   workspaceRef: { current: HTMLDivElement | null };
@@ -42,6 +49,8 @@ export function ToolWindow({
   movable = true,
   keyboardMove: keyboardMoveMode = 'button',
   anchorId,
+  boundsId,
+  avoidIds,
   zIndex,
   onFocus,
   workspaceRef,
@@ -52,6 +61,15 @@ export function ToolWindow({
   const pointerDrag = useRef<{ pointerId: number; x: number; y: number; origin: Position } | null>(null);
   const [position, setPosition] = useState<Position | null>(null);
   const [keyboardMove, setKeyboardMove] = useState(false);
+  /** Size cap from `boundsId`; null when confined to the workspace (the stylesheet's limits apply). */
+  const [limit, setLimit] = useState<{ width: number; height: number } | null>(null);
+  /**
+   * While a window sits where it was auto-placed, it may not grow past the bottom of its area: growing
+   * content (e.g. catalogue results) then scrolls instead of the clamp pushing it up over other title bars.
+   * The cap is kept, but no longer updated, once the user moves the window.
+   */
+  const [heightCap, setHeightCap] = useState<number | null>(null);
+  const autoPlaced = useRef(false);
 
   useLayoutEffect(() => {
     if (!movable) {
@@ -65,20 +83,29 @@ export function ToolWindow({
     if (!workspace || !panel) return;
 
     // Only the first open is placed automatically; afterwards `position` holds wherever the user left it.
-    const workspaceBox = workspace.getBoundingClientRect();
-    const anchorElement = anchorId ? document.getElementById(anchorId) : null;
-    const anchorRect = anchorElement?.getBoundingClientRect();
-    const anchor = anchorRect && anchorRect.width > 0
-      ? { x: anchorRect.left - workspaceBox.left, y: anchorRect.top - workspaceBox.top, width: anchorRect.width, height: anchorRect.height }
-      : null;
-    const next = initialPosition({
+    const anchor = boxOf(anchorId, workspace);
+    const area = confinement(workspace, boundsId);
+    const nextLimit = boundsId ? limitFor(area) : null;
+    setLimit(nextLimit);
+    const size = effectiveSize(panel, nextLimit);
+    const preferred = initialPosition({
       placement,
       workspace: { width: workspace.clientWidth, height: workspace.clientHeight },
-      panel: { width: panel.offsetWidth, height: panel.offsetHeight },
+      panel: size,
       anchor,
     });
-    setPosition(clampPosition(next, workspace, panel));
-  }, [open, movable, placement, anchorId, position, workspaceRef]);
+    const obstacles = (avoidIds ?? []).map((other) => boxOf(other, workspace)).filter((box): box is Box => box !== null);
+    if (obstacles.length > 0) {
+      const placed = placeAvoiding({ preferred, area, panel: size, obstacles });
+      autoPlaced.current = true;
+      setHeightCap(Math.max(MIN_AUTO_HEIGHT, Math.floor(area.y + area.height - placed.y - 8)));
+      setPosition({ x: placed.x, y: placed.y });
+    } else {
+      autoPlaced.current = false;
+      setHeightCap(null);
+      setPosition(clampToArea(preferred, area, size));
+    }
+  }, [open, movable, placement, anchorId, boundsId, avoidIds, position, workspaceRef]);
 
   useLayoutEffect(() => {
     if (!open || !movable) return;
@@ -86,17 +113,28 @@ export function ToolWindow({
     const panel = panelRef.current;
     if (!workspace || !panel) return;
 
-    const observer = new ResizeObserver(() => {
+    // Re-confine on any resize, including the docked columns opening/closing and switching layout.
+    const reconfine = () => {
+      const area = confinement(workspace, boundsId);
+      const nextLimit = boundsId ? limitFor(area) : null;
+      setLimit((current) => current?.width === nextLimit?.width && current?.height === nextLimit?.height ? current : nextLimit);
+      const size = effectiveSize(panel, nextLimit);
       setPosition((current) => {
         if (!current) return current;
-        const next = clampPosition(current, workspace, panel);
+        const cap = autoPlaced.current ? Math.max(MIN_AUTO_HEIGHT, Math.floor(area.y + area.height - current.y - 8)) : null;
+        const next = clampToArea(current, area, cap === null ? size : { width: size.width, height: Math.min(size.height, cap) });
+        if (cap !== null) setHeightCap((previous) => (previous === cap ? previous : cap));
         return next.x === current.x && next.y === current.y ? current : next;
       });
-    });
+    };
+    const observer = new ResizeObserver(reconfine);
     observer.observe(workspace);
     observer.observe(panel);
+    const bounds = boundsId ? document.getElementById(boundsId) : null;
+    if (bounds) observer.observe(bounds);
+    reconfine();
     return () => observer.disconnect();
-  }, [open, movable, workspaceRef]);
+  }, [open, movable, boundsId, workspaceRef]);
 
   if (!open) return null;
 
@@ -104,7 +142,8 @@ export function ToolWindow({
     const workspace = workspaceRef.current;
     const panel = panelRef.current;
     if (!workspace || !panel || !position) return;
-    setPosition(clampPosition({ x: position.x + dx, y: position.y + dy }, workspace, panel));
+    autoPlaced.current = false;
+    setPosition(clampToArea({ x: position.x + dx, y: position.y + dy }, confinement(workspace, boundsId), effectiveSize(panel, limit)));
   };
 
   /** Arrow keys move the window while keyboard-move mode is on; Escape leaves it. Shared by both modes. */
@@ -135,8 +174,10 @@ export function ToolWindow({
         top: position ? position.y : placement === 'left-bottom' ? undefined : 16,
         bottom: !position && placement === 'left-bottom' ? 16 : undefined,
         visibility: 'visible',
+        maxWidth: limit ? limit.width : undefined,
+        maxHeight: heightCap !== null || limit ? Math.min(heightCap ?? Infinity, limit?.height ?? Infinity) : undefined,
         zIndex,
-      } : undefined}
+      } : { zIndex }}
       onPointerDownCapture={onFocus}
       onFocusCapture={onFocus}
     >
@@ -162,6 +203,7 @@ export function ToolWindow({
           const node = panelRef.current;
           if (!node || !position) return;
           event.preventDefault();
+          autoPlaced.current = false;
           event.currentTarget.setPointerCapture(event.pointerId);
           pointerDrag.current = {
             pointerId: event.pointerId,
@@ -176,10 +218,10 @@ export function ToolWindow({
           const panel = panelRef.current;
           if (!drag || drag.pointerId !== event.pointerId || !workspace || !panel) return;
           setPosition(
-            clampPosition(
+            clampToArea(
               { x: drag.origin.x + event.clientX - drag.x, y: drag.origin.y + event.clientY - drag.y },
-              workspace,
-              panel,
+              confinement(workspace, boundsId),
+              effectiveSize(panel, limit),
             ),
           );
         }}
@@ -218,12 +260,30 @@ export function ToolWindow({
   );
 }
 
-function clampPosition(position: Position, workspace: HTMLElement, panel: HTMLElement): Position {
-  const gap = 8;
-  const maxX = Math.max(gap, workspace.clientWidth - panel.offsetWidth - gap);
-  const maxY = Math.max(gap, workspace.clientHeight - panel.offsetHeight - gap);
-  return {
-    x: Math.min(maxX, Math.max(gap, position.x)),
-    y: Math.min(maxY, Math.max(gap, position.y)),
-  };
+/** Smallest height an auto-placed window is given before it scrolls. */
+const MIN_AUTO_HEIGHT = 240;
+
+/** An element's box in workspace coordinates, or null when it is not rendered. */
+function boxOf(id: string | undefined, workspace: HTMLElement): Box | null {
+  const element = id ? document.getElementById(id) : null;
+  const rect = element?.getBoundingClientRect();
+  if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+  const origin = workspace.getBoundingClientRect();
+  return { x: rect.left - origin.left, y: rect.top - origin.top, width: rect.width, height: rect.height };
+}
+
+/** The area a window must stay inside: the `boundsId` element when rendered, else the whole workspace. */
+function confinement(workspace: HTMLElement, boundsId: string | undefined): Box {
+  return boxOf(boundsId, workspace) ?? { x: 0, y: 0, width: workspace.clientWidth, height: workspace.clientHeight };
+}
+
+function limitFor(area: Box): { width: number; height: number } {
+  return { width: Math.max(0, Math.floor(area.width - 16)), height: Math.max(0, Math.floor(area.height - 16)) };
+}
+
+/** The window's rendered size once the size cap applies (the cap may not have been rendered yet). */
+function effectiveSize(panel: HTMLElement, limit: { width: number; height: number } | null): { width: number; height: number } {
+  return limit
+    ? { width: Math.min(panel.offsetWidth, limit.width), height: Math.min(panel.offsetHeight, limit.height) }
+    : { width: panel.offsetWidth, height: panel.offsetHeight };
 }

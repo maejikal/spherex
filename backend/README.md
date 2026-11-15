@@ -43,7 +43,7 @@ reports an unreachable archive as `upstream_unavailable` (502) / `upstream_timeo
 ## Removed in the SPHEREx migration
 
 SDSS cutout provider, SDSS coverage detection, SDSS SkyServer SQL, SDSS targets, the disk image cache, `GET /api/images/cutout` (it returned SDSS JPEGs; with
-Aladin reading HiPS tiles directly there is no consumer, so it is removed rather than left misleading) and the Pillow dependency.
+Aladin reading HiPS tiles directly there is no consumer, so it is removed rather than left misleading). Pillow was removed then and is required again by the Blink Viewer, which encodes its frames as PNG.
 
 ## Verified upstream behaviour (checked live, 2026-11-14)
 

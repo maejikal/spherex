@@ -6,7 +6,8 @@ import type { ExplorerView } from '../api/types.ts';
 import { AladinController } from '../sky/aladin/controller.ts';
 import type { ViewState } from '../sky/aladin/controller.ts';
 import { clampScale, fovFromScale, scaleFromFov } from '../sky/aladin/fov.ts';
-import { defaultFrame } from '../sky/spherex/channels.ts';
+import { skyInteraction } from '../sky/aladin/interaction.ts';
+import { defaultFrame, resolveFrame } from '../sky/spherex/channels.ts';
 import { SPHEREX_HIPS_URL } from '../sky/spherex/config.ts';
 import type { SphereXSurveyInfo } from '../sky/spherex/properties.ts';
 import { formatCoordinate } from '../sky/coordinates.ts';
@@ -123,7 +124,7 @@ export function AladinSkyViewer({
         ra: initial.ra,
         dec: initial.dec,
         fov: Math.min(MAX_FOV_DEGREES, fovFromScale(initial.scale, latest.current.size.width)),
-        frame: initial.channel ?? initialFrame,
+        frame: resolveFrame(survey, initial.channel),
         grid: initial.grid,
       },
       callbacks: {
@@ -131,10 +132,8 @@ export function AladinSkyViewer({
           const width = latest.current.size.width;
           if (width > 0) latest.current.onUserView({ ra: next.ra, dec: next.dec, scale: clampScale(scaleFromFov(next.fov, width)) });
         },
-        onClick: (position) => {
-          const current = latest.current;
-          if (!current.status.loading && !current.status.tileError) current.onSelect(position);
-        },
+        // Selection is a projection of the clicked pixel, valid while tiles are still loading (interaction.ts).
+        onClick: (position) => latest.current.onSelect(position),
         onDoubleClick: (position) => {
           const current = latest.current;
           controllerRef.current?.centerOn(position);
@@ -143,11 +142,9 @@ export function AladinSkyViewer({
         },
         onHover: setCursor,
         onLoading: (loading) => {
-          if (loading) setCursor(null);
           setStatus((current) => (current.loading === loading ? current : { ...current, loading }));
         },
         onTileErrors: (message) => {
-          if (message) setCursor(null);
           setStatus((current) => (current.tileError === message ? current : { ...current, tileError: message }));
         },
       },
@@ -189,7 +186,7 @@ export function AladinSkyViewer({
     controller.setView({ ra: viewRa, dec: viewDec, fov: Math.min(MAX_FOV_DEGREES, fovFromScale(viewScale, size.width)) });
   }, [ready, viewRa, viewDec, viewScale, size.width]);
 
-  const frame = view ? (view.channel ?? initialFrame) : initialFrame;
+  const frame = view && survey ? resolveFrame(survey, view.channel) : initialFrame;
   useEffect(() => {
     if (ready) controllerRef.current?.setChannel(frame);
   }, [ready, frame]);
@@ -224,11 +221,10 @@ export function AladinSkyViewer({
   const errorTitle = initError ? 'Sky viewer could not start' : 'SPHEREx imagery unavailable';
   const errorText = initError ?? surveyError?.message ?? 'The SPHEREx HiPS service could not be reached.';
   const showConnecting = Boolean(view && !survey && surveyPending && !showError);
-  const interactive = ready && !showError;
-  const canInspect = interactive && !status.loading && !status.tileError;
+  const { interactive, canSelect: canInspect } = skyInteraction({ ready, unavailable: showError });
 
   return (
-    <section className="viewer-frame" aria-label="SPHEREx sky viewer">
+    <section id="sky-viewer" className="viewer-frame" aria-label="SPHEREx sky viewer">
       <div
         ref={surfaceRef}
         className={`sky-viewer__surface sky-viewer__surface--aladin${interactive ? ' sky-viewer__surface--ready' : ''}`}

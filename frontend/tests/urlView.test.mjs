@@ -43,3 +43,14 @@ test('old SDSS-prototype links still open: survey is remapped, scale stays arcse
   // Below the SPHEREx zoom limit the scale is clamped, not reinterpreted.
   assert.equal(parseViewSearch('?ra=1&dec=1&scale=0.05')?.scale, 0.2);
 });
+
+test('BUG-010: URL parsing keeps any non-negative integer channel for validation against the cube; junk is dropped', () => {
+  // The cube depth is unknown while parsing (it comes from the HiPS description); App normalises 999 later.
+  assert.equal(parseViewSearch('?ra=10&dec=5&scale=3&channel=999')?.channel, 999);
+  assert.equal(parseViewSearch('?ra=10&dec=5&scale=3')?.channel, null);
+  assert.equal(parseViewSearch('?ra=10&dec=5&scale=3&channel=')?.channel, null);
+  assert.equal(parseViewSearch('?ra=10&dec=5&scale=3&channel=1e400')?.channel, null);
+  assert.equal(parseViewSearch('?ra=10&dec=5&scale=3&channel=60')?.channel, 60);
+  // Normalising drops the parameter from the URL instead of keeping a frame that is not shown.
+  assert.doesNotMatch(serializeViewSearch({ ra: 10, dec: 5, scale: 3, survey: 'spherex', grid: false, channel: null }, '?channel=999'), /channel=/);
+});

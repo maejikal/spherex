@@ -2,6 +2,7 @@ import type { AladinCatalog, AladinGraphicOverlay, AladinHiPS, AladinInstance } 
 import { frequencyForFrame } from '../spherex/channels.ts';
 import type { SphereXSurveyInfo } from '../spherex/properties.ts';
 import { normalizeRightAscension } from '../coordinates.ts';
+import { disableBuiltInContextMenu } from './contextMenu.ts';
 
 export interface ViewState {
   ra: number;
@@ -112,7 +113,7 @@ export class AladinController {
       showShareControl: false,
       showSettingsControl: false,
       showColorPickerControl: false,
-      showContextMenu: false,
+      showContextMenu: false, // not sufficient in 3.8.2: attach() also clears the menu (contextMenu.ts)
       showStatusBar: false,
       showFrame: false,
       showFov: false,
@@ -127,6 +128,10 @@ export class AladinController {
 
   private attach(): void {
     const { A, aladin, options } = this;
+    // `showContextMenu: false` alone does not remove Aladin's right-click menu; see contextMenu.ts.
+    if (!disableBuiltInContextMenu(aladin) && import.meta.env?.DEV) {
+      console.warn('Aladin Lite context menu not found; check disableBuiltInContextMenu after upgrading Aladin Lite.');
+    }
     const hips = A.imageHiPS(options.hipsUrl, {
       name: 'SPHEREx DR1 all-sky cube',
       successCallback: (loaded) => {

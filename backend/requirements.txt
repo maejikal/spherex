@@ -5,6 +5,8 @@ pydantic>=2.7,<3
 pydantic-settings>=2.3
 defusedxml>=0.7.1
 astropy>=6.1,<8
+# PNG encoding of Blink Viewer frames (app/services/fits_display.py)
+pillow>=10.3
 
 # test dependencies
 pytest>=8.2

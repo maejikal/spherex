@@ -15,15 +15,23 @@ import {
   zoomScale,
 } from './sky/coordinates.ts';
 import type { SkyCoordinates } from './sky/coordinates.ts';
-import { defaultFrame } from './sky/spherex/channels.ts';
+import { resolveFrame, validChannelOrNull } from './sky/spherex/channels.ts';
 import { SPHEREX_HIPS_URL, SPHEREX_SURVEY_ID } from './sky/spherex/config.ts';
 import { fetchSurveyInfo } from './sky/spherex/properties.ts';
 import { parseViewSearch, serializeViewSearch } from './state/urlView.ts';
 import { initialPanels, orderForAnalysis, panelsForAnalysis, raise, togglePanel as toggleVisibility, zIndexFor } from './state/windows.ts';
 import type { PanelId, PanelVisibility, WindowId } from './state/windows.ts';
 import { useExplorerStore } from './state/explorerStore.ts';
+import { NavigationGuard } from './state/navigationGuard.ts';
 import { sameSkyView } from './state/viewEquality.ts';
 
+/**
+ * Floating windows avoid covering each other when they first open, title bars (close buttons) above all.
+ * Find keeps its fixed home corner; the others adapt to whatever is already open.
+ */
+const VIEW_AVOIDS = ['inspect', 'blink'] as const;
+const INSPECT_AVOIDS = ['find', 'view', 'blink'] as const;
+const BLINK_AVOIDS = ['find', 'view', 'inspect'] as const;
 
 export default function App() {
   const view = useExplorerStore((state) => state.view);
@@ -48,6 +56,14 @@ export default function App() {
   const [shareFallback, setShareFallback] = useState<string | null>(null);
   const [analysisRequested, setAnalysisRequested] = useState(false);
   const [constellationBoundary, setConstellationBoundary] = useState(false);
+  // Every explicit navigation supersedes a name/random lookup still in flight (BUG-006) and re-syncs
+  // the Find panel's coordinate fields (BUG-008).
+  const [navigationGuard] = useState(() => new NavigationGuard());
+  const [coordinateSync, setCoordinateSync] = useState(0);
+  const explicitNavigation = useCallback(() => {
+    navigationGuard.supersede();
+    setCoordinateSync((revision) => revision + 1);
+  }, [navigationGuard]);
   const constellation = useQuery({
     queryKey: ['constellation', selection?.ra, selection?.dec],
     queryFn: ({ signal }) => getConstellation(selection!, signal),
@@ -103,6 +119,10 @@ export default function App() {
 
   useEffect(() => {
     const initialView = parseViewSearch(window.location.search);
+    // A malformed channel (e.g. channel=abc) is already ignored; drop it from the address bar too.
+    if (initialView && initialView.channel === null && new URLSearchParams(window.location.search).has('channel')) {
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${serializeViewSearch(initialView, window.location.search)}${window.location.hash}`);
+    }
     setView(initialView, 'none');
     setHomeView(initialView);
   }, [setView]);
@@ -119,9 +139,20 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [urlRevision, urlUpdateMode, view]);
 
+  // A URL channel outside the verified cube (e.g. channel=999) cannot be checked until the survey
+  // description arrives. Drop it then, so the URL, selector and imagery all name the default frame.
+  const surveyInfo = survey.data;
+  const requestedChannel = view?.channel ?? null;
+  useEffect(() => {
+    if (!surveyInfo || requestedChannel === null || validChannelOrNull(surveyInfo, requestedChannel) !== null) return;
+    const current = useExplorerStore.getState().view;
+    if (current) setView({ ...current, channel: null }, 'replace');
+  }, [surveyInfo, requestedChannel, setView]);
+
   useEffect(() => {
     const handlePopState = () => {
       const previousView = parseViewSearch(window.location.search);
+      explicitNavigation();
       setView(previousView, 'none');
       setHomeView(previousView);
       setSelection(null);
@@ -130,7 +161,7 @@ export default function App() {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [setSelection, setView]);
+  }, [explicitNavigation, setSelection, setView]);
 
   const updateDimensions = useCallback((next: { width: number; height: number }) => {
     setDimensions((current) => current.width === next.width && current.height === next.height ? current : next);
@@ -148,6 +179,7 @@ export default function App() {
       grid: useExplorerStore.getState().view?.grid ?? false,
       channel: useExplorerStore.getState().view?.channel ?? null,
     };
+    explicitNavigation();
     setView(nextView, 'push');
     setHomeView(nextView);
     // Keep a cross marker on the requested position after recentering.
@@ -157,7 +189,7 @@ export default function App() {
       ? `Requested ${label} at RA ${formatCoordinate(nextView.ra, 4)}°, Dec ${formatCoordinate(nextView.dec, 4)}°.`
       : `Requested RA ${formatCoordinate(nextView.ra, 4)}°, Dec ${formatCoordinate(nextView.dec, 4)}°.`);
     setShareFallback(null);
-  }, [setSelection, setView]);
+  }, [explicitNavigation, setSelection, setView]);
 
   // Pan/zoom made inside Aladin by the user. `replace` keeps continuous panning from flooding history.
   const applyViewerView = useCallback((next: { ra: number; dec: number; scale: number }) => {
@@ -215,11 +247,12 @@ export default function App() {
     if (!homeView) return;
     const current = useExplorerStore.getState().view;
     const reset = { ...homeView, grid: current?.grid ?? homeView.grid };
+    explicitNavigation();
     setView(reset, 'push');
     setSelection(null);
     setAnalysisRequested(false);
     setAnnouncement('View reset to initial center and scale.');
-  }, [homeView, setSelection, setView]);
+  }, [explicitNavigation, homeView, setSelection, setView]);
 
   const selectPosition = useCallback((coordinates: SkyCoordinates) => {
     setSelection({ ...coordinates, accuracy: 'projection' });
@@ -230,13 +263,16 @@ export default function App() {
   const centerPosition = useCallback((coordinates: SkyCoordinates) => {
     const current = useExplorerStore.getState().view;
     if (!current) return;
+    // Double-click centring is a navigation too: a pending lookup must not override it. It moves the
+    // viewer like a pan, so an in-progress RA/Dec edit is kept.
+    navigationGuard.supersede();
     const raDistance = Math.abs(((current.ra - coordinates.ra + 540) % 360) - 180);
     if (raDistance > 1e-6 || Math.abs(current.dec - coordinates.dec) > 1e-6) {
       setView({ ...current, ...coordinates }, 'push');
     }
     setAnnouncement(`Centered view at RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°.`);
     setShareFallback(null);
-  }, [setView]);
+  }, [navigationGuard, setView]);
 
   const analyzeSelection = useCallback(() => {
     const selected = useExplorerStore.getState().selection;
@@ -387,7 +423,7 @@ export default function App() {
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, find: false }))}
         >
-          <FindPanel view={view} onNavigate={navigateTo} />
+          <FindPanel view={view} onNavigate={navigateTo} navigationGuard={navigationGuard} syncRevision={coordinateSync} />
         </ToolWindow>
 
         <ToolWindow
@@ -398,6 +434,7 @@ export default function App() {
           onFocus={() => bringToFront('view')}
           placement="beside"
           anchorId="find"
+          avoidIds={VIEW_AVOIDS}
           movable={movableTools}
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, view: false }))}
@@ -410,7 +447,7 @@ export default function App() {
             survey={survey.data}
             surveyPending={survey.isPending}
             surveyError={survey.error}
-            frame={view && survey.data ? (view.channel ?? defaultFrame(survey.data)) : null}
+            frame={view && survey.data ? resolveFrame(survey.data, view.channel) : null}
             loading={viewerStatus.loading}
             onChannelChange={changeChannel}
             canReset={Boolean(homeView && view)}
@@ -429,6 +466,7 @@ export default function App() {
           zIndex={zIndexFor(windowOrder, 'inspect')}
           onFocus={() => bringToFront('inspect')}
           placement="right-top"
+          avoidIds={INSPECT_AVOIDS}
           movable={movableTools}
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, inspect: false }))}
@@ -445,6 +483,9 @@ export default function App() {
           onFocus={() => bringToFront('blink')}
           placement="left-of"
           anchorId="inspect"
+          // Docked: stay over the sky, never over the docked cards (their close buttons stay reachable).
+          boundsId={layout === 'docked' && !compact ? 'sky-viewer' : undefined}
+          avoidIds={BLINK_AVOIDS}
           movable={!compact}
           keyboardMove="header"
           workspaceRef={workspaceRef}
