@@ -5,10 +5,18 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
+
+
+class LocalBlinkProfileSettings(BaseModel):
+    """One named, fixed pair of local SPHEREx exposures."""
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    label: str = Field(min_length=1, max_length=80)
+    files: tuple[Path, Path]
 
 
 class Settings(BaseSettings):
@@ -60,6 +68,8 @@ class Settings(BaseSettings):
         Path("~/Downloads/spherex_D5_2025_05_full.fits"),
         Path("~/Downloads/spherex_D5_2025_12_full.fits"),
     ]
+    # Extra named pairs extend the default local region instead of replacing it.
+    blink_local_profiles: list[LocalBlinkProfileSettings] = Field(default_factory=list)
     blink_pixel_scale_arcsec: float = Field(default=6.15, gt=0, le=60)
     blink_default_size: int = Field(default=256, ge=16)
     blink_min_size: int = Field(default=32, ge=16)
@@ -119,6 +129,13 @@ class Settings(BaseSettings):
     max_name_length: int = 100
     max_nearby_radius_arcsec: float = 120.0
     max_nearby_limit: int = 50
+
+    @model_validator(mode="after")
+    def unique_local_profile_ids(self) -> "Settings":
+        ids = [profile.id for profile in self.blink_local_profiles]
+        if "default" in ids or len(ids) != len(set(ids)):
+            raise ValueError("Local FITS profile IDs must be unique and cannot be 'default'.")
+        return self
 
 
 @lru_cache

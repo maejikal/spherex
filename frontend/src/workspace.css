@@ -53,7 +53,7 @@
 
 .tool-window { border-color: var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 6px 20px #0006; }
 .tool-window__header { padding: 12px 14px; background: var(--surface); border-color: var(--border-subtle); }
-.tool-window__heading h2 { font-size: 14px; }
+.tool-window__heading h2 { font-size: 16px; }
 .tool-window__heading p { color: var(--text-muted); }
 .tool-window__body { scrollbar-color: var(--border) transparent; }
 .app-footer { background: var(--page); border-color: var(--border-subtle); color: var(--text-dim); }
@@ -128,7 +128,7 @@
   .workspace--compact input { min-height: 44px; }
   .workspace--compact .viewer-instructions { display: none; }
   .workspace--compact .workspace-announcement { top: 8px; bottom: auto; max-height: 72px; overflow: auto; }
-  .app-footer { font-size: 10px; }
+  .app-footer { font-size: 12px; }
 }
 
 /* Constellation context stays with the selected sky position, even with Inspect closed. */
@@ -136,7 +136,7 @@
   display: grid;
   gap: 8px;
   min-width: 0;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
 }
 .constellation-card p { margin: 0; }
@@ -145,17 +145,17 @@
 .constellation-card a:focus-visible,
 .constellation-card summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .constellation-card__identity { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
-.constellation-card__identity p { min-width: 0; overflow-wrap: anywhere; font-size: 15px; font-weight: 600; color: var(--text); }
-.constellation-card__article { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding-block: 4px; font-size: 11px; text-decoration: none; }
+.constellation-card__identity p { min-width: 0; overflow-wrap: anywhere; font-size: 17px; font-weight: 600; color: var(--text); }
+.constellation-card__article { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding-block: 4px; font-size: 13px; text-decoration: none; }
 .constellation-card__toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; cursor: pointer; color: var(--text); }
 .constellation-card__toggle input { width: 16px; height: 16px; flex-shrink: 0; margin: 0; accent-color: var(--accent); }
-.constellation-card__details { color: var(--text-muted); font-size: 10px; }
+.constellation-card__details { color: var(--text-muted); font-size: 12px; }
 .constellation-card__details summary { width: fit-content; padding-block: 4px; cursor: pointer; }
 .constellation-card__explanation { display: grid; gap: 8px; padding-top: 8px; overflow-wrap: anywhere; }
 .constellation-card__explanation a { text-decoration: underline; }
 .viewer-analysis-actions > .constellation-card { grid-column: 1 / -1; grid-row: 2; }
 .constellation-card--compact { gap: 4px; }
-.constellation-card--compact .constellation-card__identity p { font-size: 12px; }
+.constellation-card--compact .constellation-card__identity p { font-size: 14px; }
 @media (max-width: 760px) {
   .constellation-card__toggle { min-height: 44px; }
   .workspace--compact .constellation-card__toggle input { min-height: 16px; }
@@ -178,22 +178,22 @@
   color: var(--text);
 }
 .constellation-overview__heading { display: grid; gap: 4px; padding: 12px 12px 0; }
-.constellation-overview__heading > span { color: var(--text-muted); font-size: 10px; }
-.constellation-overview__heading strong { font-size: 13px; overflow-wrap: anywhere; }
+.constellation-overview__heading > span { color: var(--text-muted); font-size: 12px; }
+.constellation-overview__heading strong { font-size: 15px; overflow-wrap: anywhere; }
 .constellation-overview__chart { display: block; width: 100%; height: auto; }
 .constellation-overview__boundary { fill: none; stroke: #f0cb85; stroke-width: 1.5; stroke-linejoin: round; }
 .constellation-overview__marker { fill: var(--accent); stroke: var(--accent); stroke-width: 1.5; }
 .constellation-overview__marker circle { stroke: var(--surface); }
-.constellation-overview__orientation { fill: var(--text-muted); font-size: 9px; }
-.constellation-overview__legend { display: flex; align-items: center; gap: 4px; padding: 0 12px 12px; color: var(--text-muted); font-size: 10px; }
+.constellation-overview__orientation { fill: var(--text-muted); font-size: 11px; }
+.constellation-overview__legend { display: flex; align-items: center; gap: 4px; padding: 0 12px 12px; color: var(--text-muted); font-size: 12px; }
 .constellation-overview__legend > span:first-child { color: var(--accent); }
-.constellation-overview__legend > span:last-child { margin-left: auto; font-size: 9px; }
-.constellation-overview > p { padding: 12px; font-size: 11px; }
+.constellation-overview__legend > span:last-child { margin-left: auto; font-size: 11px; }
+.constellation-overview > p { padding: 12px; font-size: 13px; }
 @media (max-width: 760px) {
   .constellation-overview { left: auto; right: 8px; top: 64px; bottom: auto; width: 168px; max-height: calc(100% - 80px); }
   .constellation-overview__heading { padding: 8px 8px 0; gap: 2px; }
-  .constellation-overview__heading strong { font-size: 12px; }
-  .constellation-overview__legend { padding: 0 8px 8px; font-size: 9px; }
+  .constellation-overview__heading strong { font-size: 14px; }
+  .constellation-overview__legend { padding: 0 8px 8px; font-size: 11px; }
 }
 
 /* ---- Blink viewer (aligned SPHEREx cutouts). Floats in every desktop layout, including docked. ---- */
@@ -206,67 +206,211 @@
   .workspace--docked .tool-window--blink .tool-window__header { cursor: grab; touch-action: none; }
 }
 .blink-panel { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px; }
-/* The stage shrinks with the window height so controls and metadata stay visible without scrolling. */
+/* Only the player owns fixed-height layout; loading/error content can still scroll normally. */
+.tool-window--blink .tool-window__header { flex-shrink: 0; }
+.tool-window--blink .tool-window__body { flex: 1; min-height: 0; }
+.tool-window--blink .tool-window__body:has(.blink-panel--player) { display: flex; flex-direction: column; overflow: hidden; container: blink-body / size; }
+.blink-review-player:has(.blink-panel--player) { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.blink-player-source { display: flex; flex-direction: column; gap: 10px; }
+.blink-panel--player { flex: 1; min-height: 0; }
+.blink-panel--player > :not(.blink-stage-area, .blink-secondary) { flex-shrink: 0; }
+/* Fit to actual panel space, including rectangular crops, never the browser's height. */
+.blink-stage-area { flex: 1 1 240px; min-height: 0; container-type: size; display: grid; place-items: center; }
+.blink-stage-area > .blink-stage { width: min(100cqw, calc(100cqh * var(--blink-aspect, 1))); }
+.blink-secondary { display: flex; flex-direction: column; gap: 10px; flex: 0 1 auto; max-height: 28%; min-height: 32px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.blink-secondary > * { flex-shrink: 0; }
+.blink-secondary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .blink-stage {
-  position: relative; width: min(100%, max(240px, calc(100dvh - 560px))); margin: 0 auto; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 8px;
-  background: repeating-linear-gradient(45deg, #0a0f1c 0 6px, #0d1322 6px 12px); outline-offset: 2px;
+  position: relative; width: 100%; flex: 0 0 auto; margin: 0 auto; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 8px;
+  background: #202632; outline-offset: 2px;
 }
 .blink-stage:focus-visible { outline: 2px solid var(--focus); }
-.blink-stage--loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: 12px; text-align: center; }
+.blink-stage--loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: 14px; text-align: center; }
 .blink-stage--loading p { margin: 0; }
 .blink-stage--loading svg { color: var(--accent); }
 .blink-stage__scroller { position: absolute; inset: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.blink-stage__canvas { position: relative; aspect-ratio: 1; min-width: 100%; }
-.blink-stage__image { position: absolute; inset: 0; display: block; width: 100%; height: 100%; user-select: none; }
+.blink-stage__canvas { position: relative; aspect-ratio: 1; min-width: 100%; overflow: hidden; }
+.blink-stage__image { position: absolute; inset: 0; display: block; width: 100%; height: 100%; max-width: none; user-select: none; }
 .blink-stage__badge, .blink-stage__compass {
   position: absolute; top: 8px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 6px; background: #060811cc;
-  color: var(--text); font-size: 13px; font-weight: 650; pointer-events: none;
+  color: var(--text); font-size: 15px; font-weight: 650; pointer-events: none;
 }
-.blink-stage__badge { left: 8px; }
-.blink-stage__badge small { margin-left: 8px; color: var(--text-muted); font-size: 11px; font-weight: 500; }
-.blink-stage__compass { right: 8px; color: var(--text-muted); font-size: 11px; font-weight: 500; }
-.blink-stage__overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: #060811b3; color: var(--text); font-size: 12px; }
+.blink-stage__badge { left: 8px; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blink-stage__badge small { margin-left: 8px; color: var(--text-muted); font-size: 13px; font-weight: 500; }
+.blink-stage__compass { top: auto; bottom: 8px; right: 8px; color: var(--text-muted); font-size: 13px; font-weight: 500; }
+.blink-stage__overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: #060811b3; color: var(--text); font-size: 14px; }
 .blink-stage__overlay svg { color: var(--accent); }
 .blink-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .blink-controls .icon-button { width: 34px; min-width: 34px; min-height: 30px; padding: 0; }
-.blink-speed { display: flex; align-items: center; gap: 6px; margin-left: auto; color: var(--text-muted); font-size: 11px; }
-.blink-speed .select-input { min-height: 30px; padding-top: 0; padding-bottom: 0; font-size: 11px; }
+.blink-speed { min-width: 0; display: flex; align-items: center; gap: 6px; margin-left: auto; color: var(--text-muted); font-size: 13px; }
+.blink-speed .select-input { min-width: 0; max-width: 100%; min-height: 30px; padding-top: 0; padding-bottom: 0; font-size: 13px; }
 .blink-zoom { display: flex; align-items: center; gap: 2px; }
 .blink-frames { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; }
 .blink-frame--active { border-color: var(--accent); background: var(--surface-raised); color: var(--accent-strong); }
-.blink-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin: 0; }
+.blink-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 6px 14px; margin: 0; }
 .blink-meta div { min-width: 0; }
-.blink-meta dt { color: var(--text-dim); font-size: 10px; letter-spacing: .02em; text-transform: uppercase; }
-.blink-meta dd { margin: 1px 0 0; overflow: hidden; color: var(--text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.blink-note { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.5; }
-.blink-position { color: var(--text-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.blink-meta dt { color: var(--text-dim); font-size: 12px; letter-spacing: .02em; text-transform: uppercase; }
+.blink-meta dd { margin: 1px 0 0; overflow: hidden; color: var(--text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.blink-note { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+.blink-position { color: var(--text-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
 .callout--warning { border-color: #6b5a2c; background: #1f1b12; }
 .callout--warning > svg { color: #e0c36a; }
 .callout--warning p { margin: 0 0 4px; color: #d8cfae; }
 @media (max-width: 760px) {
-  .workspace--compact .blink-stage { width: min(100%, 34vh); }
+  .workspace--compact > .tool-window--blink { position: absolute; inset: 0; height: 100%; max-height: 100%; border-radius: 0; }
   .workspace--compact .blink-controls .icon-button { min-width: 44px; min-height: 44px; }
 }
 
 /* Blink viewer: observation-source switch and the wide metadata row used in archive mode. */
 .blink-mode { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; align-self: flex-start; }
-.blink-mode__option { min-height: 28px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.blink-source-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.blink-profile { min-width: 0; width: 100%; display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 14px; }
+.blink-profile > span { white-space: nowrap; }
+.blink-profile .select-input { flex: 1; min-width: 0; min-height: 32px; max-width: 210px; padding-top: 0; padding-bottom: 0; }
+.blink-mode__option { min-height: 28px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .blink-mode__option:hover:not(:disabled) { background: var(--surface-raised); color: var(--text); }
 .blink-mode__option--active { background: var(--surface-raised); color: var(--accent-strong); font-weight: 650; box-shadow: inset 0 0 0 1px var(--accent); }
 .blink-mode__option:disabled { opacity: .45; cursor: not-allowed; }
 .blink-mode__option:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.blink-view-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: 13px; }
+.blink-view-heading .button { flex-shrink: 0; }
+.blink-coverage-note { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.blink-details { border-top: 1px solid var(--border-subtle); padding-top: 8px; }
+.blink-details summary { width: fit-content; padding: 4px 0; color: var(--text-muted); font-size: 14px; cursor: pointer; }
+.blink-details summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.blink-details[open] { display: flex; flex-direction: column; gap: 10px; }
 .blink-meta__wide { grid-column: 1 / -1; }
-.blink-meta__wide dd { white-space: normal; }
+.blink-meta__wide dd { overflow-wrap: anywhere; white-space: normal; }
 
 /* Loading clock: compact, centred, tabular digits so the width does not jitter each second. */
 .blink-clock { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 2px 0; }
-.blink-clock__time { color: var(--text); font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
-.blink-clock__estimate { color: var(--text-muted); font-size: 15px; font-weight: 500; }
-.blink-clock__caption { color: var(--text-dim); font-size: 11px; }
+.blink-clock__time { color: var(--text); font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.blink-clock__estimate { color: var(--text-muted); font-size: 17px; font-weight: 500; }
+.blink-clock__caption { color: var(--text-dim); font-size: 13px; }
 .blink-clock--overrun .blink-clock__caption { color: var(--accent-strong); }
-.blink-clock__note { max-width: 34ch; margin-top: 4px; color: var(--text-muted); font-size: 11px; line-height: 1.45; text-align: center; }
+.blink-clock__note { max-width: 34ch; margin-top: 4px; color: var(--text-muted); font-size: 13px; line-height: 1.45; text-align: center; }
 .blink-clock__note:empty { display: none; }
 
 /* Title-bar keyboard move (Blink Viewer): visible focus, and a clear "moving" state without any extra control. */
 .tool-window__header[tabindex]:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .tool-window__header--moving { box-shadow: inset 0 -2px 0 var(--accent); }
+
+@media (max-width: 400px) {
+  .blink-controls { gap: 8px; }
+  .blink-speed { margin-left: 0; }
+  .blink-stage__badge small { display: block; margin-left: 0; }
+  .blink-mode { width: 100%; }
+  .blink-mode__option { flex: 1; min-height: 36px; padding: 0 8px; }
+}
+
+/* Shared button typography grows with the workspace; preserve the top-bar scale. */
+.topbar .button { font-size: 12px; }
+@media (max-width: 760px) {
+  .topbar .toolbar-tool,
+  .topbar .toolbar-share { font-size: 11px; }
+}
+
+.workspace-announcement--selection {
+  top: 8px;
+  bottom: auto;
+  left: 50%;
+  right: auto;
+  width: max-content;
+  max-width: min(560px, calc(100% - 24px));
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  font-size: 16px;
+  line-height: 1.3;
+  white-space: normal;
+}
+@media (max-width: 760px) {
+  .workspace-announcement--selection { font-size: 14px; }
+}
+
+/* Keep explorer actions separate from community/account controls, at one consistent height. */
+.topbar .tool-toolbar { flex-wrap: wrap; gap: 12px; }
+.explorer-actions { display: flex; align-items: center; gap: 6px; order: 1; }
+.community-tools { display: flex; align-items: center; gap: 8px; order: 2; }
+.topbar .community-tools { border-left: 1px solid var(--border-subtle); padding-left: 12px; }
+.topbar .community-tools .demo-account--compact { width: 138px; min-width: 0; max-width: none; }
+.topbar .community-tools .demo-account label {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+}
+.topbar .community-tools .demo-account { display: block; }
+.topbar .community-tools select, .topbar .tool-toolbar .button { height: 36px; min-height: 36px; }
+.topbar .community-tools select { font-size: 12px; padding: 0 10px; }
+.topbar .community-review-entry { white-space: nowrap; }
+.topbar .layout-switch-group { margin-right: 0; gap: 8px; }
+.topbar .layout-switch { padding: 2px; gap: 2px; }
+.topbar .layout-choice { min-height: 30px; }
+.topbar .layout-switch__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+@media (min-width: 761px) and (max-width: 1500px) {
+  .topbar { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 12px 20px; }
+  .topbar .brand-block { grid-column: 1; grid-row: 1; }
+  .topbar .survey-badge { grid-column: 3; grid-row: 1; }
+  .topbar .layout-switch-group { grid-column: 2; grid-row: 1; justify-self: center; }
+  .topbar .tool-toolbar { grid-column: 1 / 3; grid-row: 2; }
+  .topbar .api-status { grid-column: 3; grid-row: 2; justify-self: end; }
+  .topbar .topbar__spacer { display: none; }
+}
+@media (max-width: 760px) {
+  .topbar { grid-template-rows: 40px auto; }
+  .topbar .tool-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .topbar .community-tools { order: 2; border-left: 0; padding-left: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .topbar .community-tools .demo-account--compact { width: 100%; }
+  .topbar .community-tools .button { min-width: 0; padding: 0 8px; font-size: 11px; }
+  .topbar .explorer-actions { order: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .topbar .explorer-actions .button { min-width: 0; padding: 0 4px; }
+  .topbar .demo-account-warning { grid-column: 1 / -1; max-width: none; }
+}
+
+/* Image annotations must not obscure small fitted fields. Full date remains in observation details. */
+@container (max-height: 240px) {
+  .blink-stage__badge { padding: 3px 5px; font-size: 12px; }
+  .blink-stage__badge small { display: none; }
+  .blink-stage__compass { padding: 2px 5px; font-size: 11px; }
+}
+
+.blink-destination { min-width: 0; overflow-wrap: anywhere; }
+
+/* Short, wide windows put transport beside the image instead of reducing it to a thumbnail. */
+@container blink-body (max-height: 430px) and (min-width: 420px) {
+  .blink-panel--player { display: grid; grid-template-columns: minmax(0, 1fr) 160px; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  .blink-panel--player > * { grid-column: 1 / -1; }
+  .blink-panel--player > .blink-stage-area { grid-column: 1; grid-row: 3; align-self: stretch; }
+  .blink-panel--player > .blink-controls { grid-column: 2; grid-row: 3; align-self: center; }
+  .blink-panel--player > .blink-secondary { grid-row: 4; max-height: 80px; min-height: 37px; }
+}
+/* Extreme landscape/confinement: retain readable content and pin transport while the content scrolls. */
+@container blink-body (max-height: 260px) {
+  .blink-panel--player { display: flex; overflow: auto; }
+  .blink-panel--player > .blink-stage-area { flex: 0 0 180px; align-self: stretch; }
+  .blink-panel--player > .blink-controls { position: sticky; bottom: 0; order: 1; z-index: 1; align-self: stretch; padding: 6px 0; background: var(--surface); box-shadow: 0 8px 0 var(--surface); }
+  .blink-panel--player > .blink-secondary { flex: none; max-height: none; overflow: visible; }
+}
+
+/* Expanded details borrow the image area, rather than remaining a tiny nested scroll strip.
+   The native disclosure retains keyboard/focus behavior; the mounted player retains frame and zoom. */
+.blink-details__return { display: none; }
+.blink-details__content { display: flex; flex-direction: column; gap: 16px; padding: 6px 2px 16px 0; }
+.blink-panel--player:has(.blink-details[open]) { display: flex; overflow: hidden; }
+.blink-panel--player:has(.blink-details[open]) > .blink-player-source,
+.blink-panel--player:has(.blink-details[open]) > .blink-view-heading,
+.blink-panel--player:has(.blink-details[open]) > .blink-stage-area { display: none; }
+.blink-panel--player:has(.blink-details[open]) > .blink-secondary {
+  flex: 1 1 0; order: 1; min-height: 0; max-height: none; overflow: auto; overscroll-behavior: contain;
+}
+.blink-panel--player:has(.blink-details[open]) > .blink-controls {
+  order: 2; position: static; flex: 0 0 auto; width: 100%; align-self: stretch; padding-top: 10px; border-top: 1px solid var(--border-subtle);
+}
+.blink-panel--player .blink-details[open] { padding-top: 0; border-top: 0; gap: 16px; }
+.blink-panel--player .blink-details[open] > summary {
+  position: sticky; top: 0; z-index: 2; width: 100%; padding: 10px 0; background: var(--surface); color: var(--text);
+}
+.blink-details[open] .blink-details__return { display: inline; float: right; margin-left: 8px; color: var(--accent-strong); font-size: 12px; }
+.blink-details[open] .blink-meta { grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 16px 20px; }
+.blink-details[open] .blink-meta dd { margin-top: 4px; overflow: visible; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
+.blink-details[open] .blink-coverage-note, .blink-details[open] .blink-note { line-height: 1.6; }
+.blink-details__content .callout p { margin: 0; line-height: 1.6; }
+.blink-details__content .callout p + p { margin-top: 12px; }

@@ -1,6 +1,6 @@
 /** Blink playback state as a pure reducer, so the timing rules can be tested without a browser. */
 
-export const BLINK_INTERVALS_MS = [250, 500, 1000, 2000] as const;
+export const BLINK_INTERVALS_MS = [100, 250, 500] as const;
 export const DEFAULT_BLINK_INTERVAL_MS = 500;
 export const ZOOM_LEVELS = [1, 2, 4] as const;
 
@@ -21,6 +21,12 @@ export type PlayerAction =
 
 export function initialPlayer(): PlayerState {
   return { frame: 0, playing: false, intervalMs: DEFAULT_BLINK_INTERVAL_MS };
+}
+
+export function frameDirectionForKey(key: string): -1 | 1 | null {
+  if (key === 'ArrowLeft') return -1;
+  if (key === 'ArrowRight') return 1;
+  return null;
 }
 
 const wrap = (frame: number, count: number): number => (count <= 0 ? 0 : ((frame % count) + count) % count);

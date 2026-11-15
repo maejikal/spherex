@@ -5,6 +5,7 @@ import type { SkyCoordinates } from '../sky/coordinates.ts';
 export type UrlUpdateMode = 'push' | 'replace' | 'none';
 
 interface SelectedPosition extends SkyCoordinates {
+  name?: string;
   accuracy: 'projection';
 }
 

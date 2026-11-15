@@ -7,13 +7,16 @@ relative to each other, like the real May and December files. The real 65 MB fil
 from __future__ import annotations
 
 import io
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
 from astropy.wcs import WCS
 from PIL import Image
 
+from app.config import LocalBlinkProfileSettings, Settings
 import app.services.blink_service as blink_service
 from app.services.fits_cutout import CutoutSet, build_output_wcs, ResampledFrame, extract_cutouts, inspect_fits, resample_to_grid
 from app.services.fits_display import (
@@ -240,7 +243,7 @@ def test_no_coverage_is_a_structured_error(blink_client):
     error = response.json()["error"]
     assert error["code"] == "no_fits_coverage"
     assert error["message"].startswith("No usable SPHEREx observations are available for this selected region.")
-    assert "RA 150" in error["message"]  # tells the user where the data are, from the headers
+    assert "Local files cover only limited areas of sky." in error["message"]
 
 
 def test_one_frame_covering_is_not_enough(tmp_path, make_client):
@@ -357,6 +360,82 @@ def test_unknown_or_malicious_frame_ids_are_rejected(blink_client):
         response = blink_client.get(f"/api/blink/images/{frame_id}.png", params={"ra": CENTRE[0], "dec": CENTRE[1], "size": SIZE})
         assert response.status_code in (404, 422)
         assert response.headers["content-type"].startswith("application/json")
+
+
+def test_named_local_profile_preserves_default_pair_and_serves_its_images(make_client, tmp_path, pair):
+    barnard = (269.446305, 4.767740)
+    first, second = tmp_path / "barnard-aug.fits", tmp_path / "barnard-mar.fits"
+    make_exposure(first, centre=barnard, date_obs="2025-08-28T10:25:07.834", mjd=60919.4, obsid="BARNARD_AUG")
+    make_exposure(second, centre=barnard, date_obs="2026-03-11T10:23:36.229", mjd=61110.4, obsid="BARNARD_MAR")
+    profile = LocalBlinkProfileSettings(id="barnards-star", label="Barnard's Star", files=(first, second))
+    client = make_client(blink_fits_files=list(pair), blink_local_profiles=[profile], blink_default_size=SIZE)
+
+    modes = client.get("/api/blink/modes").json()
+    assert modes["local_demo_available"] is True
+    assert modes["local_profiles"] == [
+        {"id": "default", "label": "Local demo (real SPHEREx)"},
+        {"id": "barnards-star", "label": "Barnard's Star"},
+    ]
+
+    default = client.get("/api/blink/cutouts", params={"ra": CENTRE[0], "dec": CENTRE[1], "size": SIZE})
+    assert default.status_code == 200
+    assert {frame["obsid"] for frame in default.json()["frames"]} == {"OBS_MAY", "OBS_DEC"}
+
+    selected = client.get("/api/blink/cutouts", params={"ra": barnard[0], "dec": barnard[1], "size": SIZE, "profile": "barnards-star"})
+    assert selected.status_code == 200
+    body = selected.json()
+    assert {frame["obsid"] for frame in body["frames"]} == {"BARNARD_AUG", "BARNARD_MAR"}
+    image_url = body["frames"][0]["image_url"]
+    assert "profile=barnards-star" in image_url
+    assert client.get(image_url).status_code == 200
+
+    # Local mode needs only the analysed coordinates, not a user-selected pair.
+    for coordinates, expected_profile, expected_obsids in (
+        (barnard, "barnards-star", {"BARNARD_AUG", "BARNARD_MAR"}),
+        (CENTRE, "default", {"OBS_MAY", "OBS_DEC"}),
+        (barnard, "barnards-star", {"BARNARD_AUG", "BARNARD_MAR"}),
+    ):
+        automatic = client.get("/api/blink/cutouts", params={"ra": coordinates[0], "dec": coordinates[1], "size": SIZE})
+        assert automatic.status_code == 200
+        assert {frame["obsid"] for frame in automatic.json()["frames"]} == expected_obsids
+        for frame in automatic.json()["frames"]:
+            assert f"profile={expected_profile}" in frame["image_url"]
+            assert client.get(frame["image_url"]).status_code == 200
+
+    uncovered = client.get("/api/blink/cutouts", params={"ra": 20, "dec": -30, "size": SIZE})
+    assert uncovered.status_code == 404
+    assert uncovered.json()["error"]["code"] == "no_fits_coverage"
+
+    unknown = client.get("/api/blink/cutouts", params={"ra": barnard[0], "dec": barnard[1], "profile": "not-configured"})
+    assert unknown.status_code == 422
+
+
+@pytest.mark.parametrize("default_state", ["unconfigured", "missing", "corrupt"])
+def test_auto_selection_uses_named_pair_when_default_unavailable(make_client, tmp_path, pair, default_state):
+    bad = tmp_path / "bad.fits"
+    bad.write_text("not FITS")
+    defaults = {
+        "unconfigured": [],
+        "missing": [pair[0], tmp_path / "missing.fits"],
+        "corrupt": [pair[0], bad],
+    }
+    profile = LocalBlinkProfileSettings(id="covered", label="Covered test field", files=pair)
+    client = make_client(blink_fits_files=defaults[default_state], blink_local_profiles=[profile])
+    response = client.get("/api/blink/cutouts", params={"ra": CENTRE[0], "dec": CENTRE[1], "size": SIZE})
+    assert response.status_code == 200
+    assert all("profile=covered" in frame["image_url"] for frame in response.json()["frames"])
+
+
+def test_local_profiles_parse_from_json_environment(monkeypatch, tmp_path):
+    files = [str(tmp_path / "first.fits"), str(tmp_path / "second.fits")]
+    monkeypatch.setenv("SKY_BLINK_LOCAL_PROFILES", json.dumps([
+        {"id": "barnards-star", "label": "Barnard's Star", "files": files},
+    ]))
+    settings = Settings(_env_file=None)
+    profile = settings.blink_local_profiles[0]
+    assert profile.id == "barnards-star"
+    assert profile.label == "Barnard's Star"
+    assert profile.files == (Path(files[0]), Path(files[1]))
 
 
 def test_missing_fits_file_is_a_clear_503(make_client, tmp_path, pair):

@@ -11,6 +11,7 @@ import type { SphereXChannel } from '../sky/spherex/channels.ts';
 import type { SphereXSurveyInfo } from '../sky/spherex/properties.ts';
 
 interface WavelengthSelectorProps {
+  sectionClassName?: string;
   survey: SphereXSurveyInfo | undefined;
   surveyPending: boolean;
   surveyError: Error | null;
@@ -23,7 +24,16 @@ interface WavelengthSelectorProps {
 
 const SLIDER_COMMIT_MS = 180;
 
-export function WavelengthSelector({ survey, surveyPending, surveyError, frame, loading, disabled, onChange }: WavelengthSelectorProps) {
+export function WavelengthSelector({
+  sectionClassName,
+  survey,
+  surveyPending,
+  surveyError,
+  frame,
+  loading,
+  disabled,
+  onChange,
+}: WavelengthSelectorProps) {
   const [sliderFrame, setSliderFrame] = useState<number | null>(frame);
   const commitTimer = useRef<number | null>(null);
 
@@ -36,7 +46,7 @@ export function WavelengthSelector({ survey, surveyPending, surveyError, frame, 
 
   if (!survey) {
     return (
-      <section className="panel-section" aria-labelledby="wavelength-heading">
+      <section className={`panel-section${sectionClassName ? ` ${sectionClassName}` : ''}`} aria-labelledby="wavelength-heading">
         <div className="section-heading">
           <h3 id="wavelength-heading">Wavelength</h3>
         </div>
@@ -63,7 +73,7 @@ export function WavelengthSelector({ survey, surveyPending, surveyError, frame, 
   };
 
   return (
-    <section className="panel-section" aria-labelledby="wavelength-heading">
+    <section className={`panel-section${sectionClassName ? ` ${sectionClassName}` : ''}`} aria-labelledby="wavelength-heading">
       <div className="section-heading view-section-heading">
         <h3 id="wavelength-heading">Wavelength</h3>
         <p>{usable} of {survey.depth} channels have imagery</p>

@@ -9,7 +9,7 @@ The interaction model is inspired by SDSS Navigate; SDSS data is not used.
   backend proxy is used for the main sky. The separate blink viewer serves backend-generated PNGs from real FITS observations.
 - **Constellations:** selected-position IAU membership via local Astropy, Wikipedia links, and optional official boundary outlines.
 - **Backend (FastAPI):** survey metadata, CDS Sesame name resolution, SIMBAD nearby-object lookup, tile-verified targets, and aligned FITS blink cutouts.
-- **Blink viewer:** archive-discovered, wavelength-matched observation pairs, plus an explicitly selected local two-exposure demo.
+- **Blink viewer:** archive-discovered, wavelength-matched observation pairs, plus local SPHEREx observations automatically matched to the analysed coordinates when Local SPHEREx is selected.
 - **Workspace:** floating or docked Find / View / Inspect windows; compact screens use bottom sheets.
 
 Current scope and scientific constraints: [project.md](project.md).
@@ -61,7 +61,8 @@ Backend settings use `SKY_*` environment variables or `backend/.env` when starte
 - `SKY_CORS_ORIGINS`: allowed frontend origins; defaults to localhost and 127.0.0.1 on port 5173.
 - `SKY_BLINK_DYNAMIC_ENABLED`: archive analysis enabled by default.
 - `SKY_BLINK_CACHE_DIR`, `SKY_BLINK_CACHE_MAX_BYTES`: writable FITS/calibration disk cache; defaults to `backend/.cache/blink` and 1 GiB.
-- `SKY_BLINK_FITS_FILES`: local-demo file paths; defaults to `~/Downloads/spherex_D5_2025_05_full.fits` and `~/Downloads/spherex_D5_2025_12_full.fits`. Files are not bundled. Missing files do not prevent sky browsing or archive mode.
+- `SKY_BLINK_FITS_FILES`: original local demo pair (real SPHEREx, supplied locally rather than queried from NASA by the app); defaults to `~/Downloads/spherex_D5_2025_05_full.fits` and `~/Downloads/spherex_D5_2025_12_full.fits`.
+- `SKY_BLINK_LOCAL_PROFILES`: optional JSON list of named extra FITS pairs. Profiles appear in the Local SPHEREx selector and leave the default pair unchanged. Files are not bundled; missing pairs are unavailable.
 - `SKY_BLINK_CALIBRATION_SEED_FILES`: optional local full-frame calibration seeds; otherwise archive mode bootstraps calibration from IRSA.
 - `SKY_DYNAMIC_FOV_DEFAULT/MIN/MAX`: archive cutout field in degrees; defaults to 0.1 / 0.02 / 0.5. Pair-selection and quality thresholds are provisional engineering settings, not validated scientific criteria.
 - Frontend `VITE_API_BASE_URL`: API origin override (default same-origin `/api` requests). `VITE_SPHEREX_HIPS_URL`: HiPS source override; pair with `SKY_SPHEREX_HIPS_URL` for consistent frontend/backend metadata. Overrides must still supply the expected SPHEREx cube.
@@ -107,7 +108,7 @@ Keep UI, viewer state, provider integrations and backend logic in separate modul
 | `GET /api/targets/suggested` | Curated, tile-verified SPHEREx targets |
 | `GET /api/targets/random` | Random tile-verified sky position (uniform on the sphere) |
 | `GET /api/blink/cutouts?ra=&dec=` | Aligned May/December SPHEREx cutouts from two local FITS files, for the blink viewer (`SKY_BLINK_FITS_FILES`) |
-| `GET /api/blink/images/{frame_id}.png?ra=&dec=&size=` | Local-demo PNG; use returned image URLs |
+| `GET /api/blink/images/{frame_id}.png?ra=&dec=&size=` | Local SPHEREx PNG; use returned image URLs |
 | `GET /api/blink/modes` | Archive enabled / local files available |
 | `GET /api/blink/dynamic?ra=&dec=&fov_deg=0.1` | Discover, verify and align a two-epoch archive pair |
 | `GET /api/blink/dynamic/images/{frame_id}.png?ra=&dec=&fov_deg=` | Archive PNG; use returned image URLs |
@@ -124,8 +125,8 @@ Coordinates are ICRS decimal degrees (`0 <= RA < 360`, `-90 <= Dec <= 90`). Near
 ## Constellations
 
 Select a sky position (click, or focus the viewer and press Enter). Its constellation appears in the selected-position tray and Inspect,
-without running SIMBAD analysis. Enable **Official boundary outline** to draw that constellation in gold. The toggle persists across
-navigation during the session; clearing the selection hides the outline. Close zoom can put the boundary outside the viewport; zoom out
+without running SIMBAD analysis. **Official boundary outline** is enabled by default; its toggle controls the gold outline and persists
+across navigation during the session. Clearing the selection hides the outline. Close zoom can put the boundary outside the viewport; zoom out
 to see it. The selected position, not the viewport center or a catalogue match, determines membership. Boundaries work independently of
 SPHEREx channel/coverage. No star figures, artwork, or zodiac/astrological inference is used.
 
@@ -144,13 +145,13 @@ opens only when requested; article titles are explicitly mapped to avoid ambiguo
 
 ## Blink analysis
 
-Select a position, then choose **Analyze area** to open SIMBAD inspection and the Blink viewer. Analysis captures that position; later panning or selection does not replace it. Archive mode is the default. Local demo is explicitly selectable; an archive failure never silently substitutes local images.
+Select a position, then choose **Analyze area** to open SIMBAD inspection and the Blink viewer. Analysis captures that position; later panning or selection does not replace it. Archive mode is the default. Local SPHEREx is explicitly selectable; an archive failure never silently substitutes local images.
 
 Archive mode searches IRSA SIA2 for SPHEREx DR1 observations, groups actual timestamps into epochs, ranks same-detector wavelength-compatible pairs, downloads FITS cutouts, and verifies wavelength, calibration, position and coverage before accepting a pair. It can reject a field even when HiPS imagery exists. The response carries observation identifiers, dates, wavelengths, coverage, WCS, provenance and warnings.
 
 Both modes resample exposures onto a common TAN grid using Astropy's SIP-aware WCS and mask-aware bilinear interpolation. Local frames are north-up/east-left; archive frames can use a reported rotation. NONFUNC and MISSING_DATA flags are masked; other flags, including SOURCE, remain visible. Archive mode also excludes invalid science/variance and reports caution flags. A per-frame additive background removal and common asinh stretch affect display only. This is **not flux-conserving reprojection or photometric calibration**.
 
-Playback waits for both PNGs to decode. Controls include play/pause, frame stepping, speed, and 1x/2x/4x display zoom. Local demo coverage depends on the configured files, not the all-sky cube. Missing data, rejected pairs and upstream failures remain distinct. Full processing details: [backend/README.md](backend/README.md#dynamic-blink-nasaipac-archive).
+Playback waits for both PNGs to decode. Controls include play/pause, frame stepping, speed, and 1x/2x/4x display zoom. Local SPHEREx coverage depends on the configured files, not the all-sky cube. Missing data, rejected pairs and upstream failures remain distinct. Full processing details: [backend/README.md](backend/README.md#dynamic-blink-nasaipac-archive).
 
 ## View state
 
@@ -169,3 +170,7 @@ Shared URLs include `ra`, `dec`, `scale`, `survey=spherex`, zero-based `channel`
 ## License
 
 See [`LICENSE`](LICENSE). Aladin Lite is LGPL-3.0 (CDS). Do not reuse SDSS branding, logos or proprietary assets.
+
+### Browser-local flagged observations
+
+Blink viewer now supports **Flag for review**, per-image crosshair annotations, and a **Community review** queue. Cases retain original image evidence in IndexedDB on this browser only. Demo reviewer identities illustrate five-review/80%-support approval; author closes voting. MPC/observatory handoff is explicitly simulated, never an external submission or confirmed discovery. Case URLs do not transfer evidence across browsers. See [frontend review workflow](frontend/README.md#community-review-prototype) for controls, persistence limits and future authenticated-backend boundary.

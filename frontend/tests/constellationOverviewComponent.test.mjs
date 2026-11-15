@@ -20,6 +20,8 @@ const constellation = {
 test('overview provides named SVG, separate outline and selected-position marker', () => {
   const markup = renderToStaticMarkup(createElement(ConstellationOverview, { constellation }));
   assert.match(markup, /aria-label="Pisces constellation overview"/);
+  assert.match(markup, /You are in the constellation/);
+  assert.doesNotMatch(markup, /Constellation overview/);
   assert.match(markup, /role="img"/);
   assert.match(markup, /Full official boundary of Pisces/);
   assert.match(markup, /class="constellation-overview__boundary"/);

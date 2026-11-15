@@ -1,3 +1,5 @@
+import type { SexagesimalCoordinateInput, SkyCoordinates } from '../sky/coordinates.ts';
+
 /**
  * The Find panel's RA/Dec fields: an editable draft kept separate from the live viewer position.
  *
@@ -41,4 +43,20 @@ export function editDraft(draft: CoordinateDraft, field: 'ra' | 'dec', text: str
 /** An explicit navigation or reset: discard any edit and show the view navigated to. */
 export function syncDraft(view: { ra: number; dec: number } | null): CoordinateDraft {
   return draftFromView(view);
+}
+
+/** Format the same editable position as HMS/DMS; rounding carries across minutes and RA wraps. */
+export function sexagesimalFromView(view: SkyCoordinates | null): SexagesimalCoordinateInput {
+  if (!view) return { raHours: '', raMinutes: '', raSeconds: '', decSign: '+', decDegrees: '', decMinutes: '', decSeconds: '' };
+  const raSeconds = (Math.round(view.ra / 15 * 3600 * 1000) / 1000) % (24 * 3600);
+  const decSeconds = Math.round(Math.abs(view.dec) * 3600 * 1000) / 1000;
+  return {
+    raHours: String(Math.floor(raSeconds / 3600)),
+    raMinutes: String(Math.floor(raSeconds % 3600 / 60)),
+    raSeconds: (raSeconds % 60).toFixed(3),
+    decSign: view.dec < 0 || Object.is(view.dec, -0) ? '-' : '+',
+    decDegrees: String(Math.floor(decSeconds / 3600)),
+    decMinutes: String(Math.floor(decSeconds % 3600 / 60)),
+    decSeconds: (decSeconds % 60).toFixed(3),
+  };
 }

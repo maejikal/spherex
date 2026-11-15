@@ -92,19 +92,20 @@ Focused tests: `../.venv/bin/python -m pytest tests/test_constellations.py -q` (
 
 ## Blink viewer (local SPHEREx FITS)
 
-Two real SPHEREx Level-2 detector images of the same field, observed about six months apart, are compared by
-blinking. They are read from **fixed server-side paths**; no request can name a file.
+Two real SPHEREx Level-2 detector images of the same field, observed at different epochs, are compared by
+blinking. The default pair and any optional named pairs are read from **fixed server-side paths**; no request can name a file.
 
 | Variable | Default |
 | --- | --- |
 | `SKY_BLINK_FITS_FILES` (JSON list) | `["~/Downloads/spherex_D5_2025_05_full.fits","~/Downloads/spherex_D5_2025_12_full.fits"]` |
+| `SKY_BLINK_LOCAL_PROFILES` (JSON list) | `[]`; optional `{id, label, files}` pairs, selectable in the Local SPHEREx viewer |
 | `SKY_BLINK_PIXEL_SCALE_ARCSEC` | `6.15` (native is about 6.14-6.15) |
 | `SKY_BLINK_DEFAULT_SIZE` / `_MIN_SIZE` / `_MAX_SIZE` | `256` / `32` / `512` pixels |
 | `SKY_BLINK_MIN_COVERAGE_FRACTION` | `0.10`; a frame with less usable data than this in the cutout is "no coverage" |
 | `SKY_BLINK_FULL_COVERAGE_FRACTION` | `0.95`; below this the response carries a partial-coverage warning |
 | `SKY_BLINK_CACHE_ENTRIES` / `_TTL_SECONDS` | `24` / `3600` |
 
-The files are large (about 65 MB) and git-ignored (`*.fits`); keep them outside the repository.
+Each pair is configured independently. Adding a named profile does not replace the default pair. Without a `profile` parameter, `GET /api/blink/cutouts` automatically selects the first usable pair in configuration order (default first), testing actual WCS-aligned valid-pixel coverage at the analysed coordinates. Returned image URLs pin that profile. Explicit `profile` requests remain supported; no usable pair returns a no-coverage error, while unreadable files remain service errors. Files are git-ignored (`*.fits`); large detector images are best kept outside the repository. Small cutouts can still have limited sky coverage.
 
 **Processing** (`services/fits_cutout.py`, `fits_display.py`, `blink_service.py`):
 
@@ -198,5 +199,5 @@ Settings (all `SKY_`-prefixed; pair-selection values are provisional engineering
 measured to recover about 2 points of coverage on the M101 reference pair but is not validated as a universal default).
 
 The archive returns HTTP 502/503 intermittently. Calls have connect/read timeouts and bounded retries with exponential backoff; if IRSA stays down the API answers
-`upstream_unavailable` and the local demo remains available only when the user chooses it. The first request for a new field downloads ~2 cutouts (about 10-20 s each);
+`upstream_unavailable` and the local SPHEREx remains available only when the user chooses it. The first request for a new field downloads ~2 cutouts (about 10-20 s each);
 repeats are served from the disk cache.

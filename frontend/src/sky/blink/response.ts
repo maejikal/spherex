@@ -1,4 +1,4 @@
-import type { BlinkAnalysis, BlinkFrame, BlinkModes, BlinkProvenance, BlinkSelection } from '../../api/types.ts';
+import type { BlinkAnalysis, BlinkFrame, BlinkLocalProfile, BlinkModes, BlinkProvenance, BlinkSelection } from '../../api/types.ts';
 
 export class BlinkResponseError extends Error {
   constructor(message: string) {
@@ -17,12 +17,17 @@ export function dynamicBlinkPath(coordinates: { ra: number; dec: number }, fovDe
 
 export function parseBlinkModes(value: unknown): BlinkModes {
   const root = record(value, 'modes');
-  return { dynamicEnabled: root.dynamic_enabled === true, localDemoAvailable: root.local_demo_available === true };
+  const rawProfiles = root.local_profiles;
+  if (rawProfiles !== undefined && !Array.isArray(rawProfiles)) throw new BlinkResponseError('Blink modes contain an invalid local profile list.');
+  const localProfiles = (rawProfiles ?? []).map(parseLocalProfile);
+  if (new Set(localProfiles.map((profile) => profile.id)).size !== localProfiles.length) throw new BlinkResponseError('Blink modes repeat a local profile.');
+  return { dynamicEnabled: root.dynamic_enabled === true, localDemoAvailable: root.local_demo_available === true, localProfiles };
 }
 
 /** API path for the aligned cutouts of one analysed position (coordinates are sent unrounded). */
-export function blinkCutoutsPath(coordinates: { ra: number; dec: number }, size: number): string {
+export function blinkCutoutsPath(coordinates: { ra: number; dec: number }, size: number, profileId?: string): string {
   const query = new URLSearchParams({ ra: String(coordinates.ra), dec: String(coordinates.dec), size: String(size) });
+  if (profileId !== undefined) query.set('profile', profileId);
   return `/api/blink/cutouts?${query}`;
 }
 
@@ -88,6 +93,13 @@ function parseFrame(value: unknown, index: number, resolveUrl: (path: string) =>
     suspectFraction: optionalNumber(frame.suspect_fraction),
     calibrationVersion: typeof frame.calibration_version === 'string' ? frame.calibration_version : undefined,
   };
+}
+
+function parseLocalProfile(value: unknown): BlinkLocalProfile {
+  const profile = record(value, 'local profile');
+  const id = text(profile.id, 'local profile id');
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) throw new BlinkResponseError('Blink modes contain an invalid local profile ID.');
+  return { id, label: text(profile.label, 'local profile label') };
 }
 
 function optionalNumber(value: unknown): number | undefined {

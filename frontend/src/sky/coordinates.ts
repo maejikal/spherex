@@ -9,6 +9,18 @@ export interface CoordinateInputResult {
   error?: string;
 }
 
+export type RightAscensionUnit = 'degrees' | 'hours';
+
+export interface SexagesimalCoordinateInput {
+  raHours: string;
+  raMinutes: string;
+  raSeconds: string;
+  decSign: '+' | '-';
+  decDegrees: string;
+  decMinutes: string;
+  decSeconds: string;
+}
+
 /** Scale is arcseconds per CSS pixel of the viewer width (Aladin FOV = width * scale / 3600). */
 export const DEFAULT_SCALE_ARCSEC_PER_PIXEL = 2.5;
 export const MIN_SCALE_ARCSEC_PER_PIXEL = 0.2;
@@ -23,21 +35,52 @@ export function normalizeRightAscension(ra: number): number {
   return Object.is(normalized, -0) ? 0 : normalized;
 }
 
-export function parseCoordinateInput(raText: string, decText: string): CoordinateInputResult {
-  const ra = Number(raText.trim());
+export function parseCoordinateInput(
+  raText: string,
+  decText: string,
+  raUnit: RightAscensionUnit = 'degrees',
+): CoordinateInputResult {
+  const enteredRa = Number(raText.trim());
   const dec = Number(decText.trim());
 
-  if (!raText.trim() || !decText.trim() || !Number.isFinite(ra) || !Number.isFinite(dec)) {
+  if (!raText.trim() || !decText.trim() || !Number.isFinite(enteredRa) || !Number.isFinite(dec)) {
     return { ok: false, error: 'Enter finite right ascension and declination values.' };
   }
-  if (ra < 0 || ra >= 360) {
-    return { ok: false, error: 'Right ascension must be at least 0° and less than 360°.' };
+  const raLimit = raUnit === 'hours' ? 24 : 360;
+  if (enteredRa < 0 || enteredRa >= raLimit) {
+    const unit = raUnit === 'hours' ? ' h' : '°';
+    return { ok: false, error: `Right ascension must be at least 0${unit} and less than ${raLimit}${unit}.` };
   }
   if (dec < -90 || dec > 90) {
     return { ok: false, error: 'Declination must be between −90° and +90°.' };
   }
 
-  return { ok: true, value: { ra, dec } };
+  return { ok: true, value: { ra: raUnit === 'hours' ? enteredRa * 15 : enteredRa, dec } };
+}
+
+/** Converts HMS right ascension and signed DMS declination into decimal degrees. */
+export function parseSexagesimalCoordinateInput(input: SexagesimalCoordinateInput): CoordinateInputResult {
+  const values = [input.raHours, input.raMinutes, input.raSeconds, input.decDegrees, input.decMinutes, input.decSeconds]
+    .map((part) => part.trim());
+  const [hours, raMinutes, raSeconds, degrees, decMinutes, decSeconds] = values.map(Number) as [number, number, number, number, number, number];
+  if (values.some((part) => !part) || values.some((part) => !Number.isFinite(Number(part)))) {
+    return { ok: false, error: 'Enter hours, minutes, and seconds for both coordinates.' };
+  }
+  if (!['+', '-'].includes(input.decSign)) {
+    return { ok: false, error: 'Choose a positive or negative declination sign.' };
+  }
+  if (hours < 0 || hours >= 24 || !Number.isInteger(hours) || raMinutes < 0 || raMinutes >= 60 || !Number.isInteger(raMinutes) || raSeconds < 0 || raSeconds >= 60) {
+    return { ok: false, error: 'Right ascension must be 0–23 hours, 0–59 minutes, and 0–<60 seconds.' };
+  }
+  if (degrees < 0 || degrees > 90 || !Number.isInteger(degrees) || decMinutes < 0 || decMinutes >= 60 || !Number.isInteger(decMinutes) || decSeconds < 0 || decSeconds >= 60) {
+    return { ok: false, error: 'Declination must be within 90° with minutes and seconds from 0 to <60.' };
+  }
+  if (degrees === 90 && (decMinutes !== 0 || decSeconds !== 0)) {
+    return { ok: false, error: 'At 90° declination, minutes and seconds must be zero.' };
+  }
+  const ra = (hours + raMinutes / 60 + raSeconds / 3600) * 15;
+  const absoluteDec = degrees + decMinutes / 60 + decSeconds / 3600;
+  return { ok: true, value: { ra, dec: input.decSign === '-' ? -absoluteDec : absoluteDec } };
 }
 
 /**
@@ -144,4 +187,14 @@ export function zoomScale(
 
 export function formatCoordinate(value: number, digits = 5): string {
   return Number.isFinite(value) ? value.toFixed(digits) : 'Unavailable';
+}
+
+/** Format canonical degree RA in the selected unit, wrapping rounded 360°/24 h to zero. */
+export function formatRightAscension(raDegrees: number, unit: RightAscensionUnit, digits = 3): string {
+  if (!Number.isFinite(raDegrees)) return 'Unavailable';
+  const normalizedRa = normalizeRightAscension(raDegrees);
+  const value = unit === 'hours' ? normalizedRa / 15 : normalizedRa;
+  const limit = unit === 'hours' ? 24 : 360;
+  const rounded = Number(value.toFixed(digits));
+  return formatCoordinate(rounded >= limit ? 0 : rounded, digits);
 }

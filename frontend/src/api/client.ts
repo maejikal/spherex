@@ -189,8 +189,9 @@ export async function getBlinkCutouts(
   coordinates: SkyCoordinates,
   size: number = BLINK_CUTOUT_SIZE,
   signal?: AbortSignal,
+  profileId?: string,
 ): Promise<BlinkAnalysis> {
-  const value = await fetchJson(blinkCutoutsPath(coordinates, size), signal);
+  const value = await fetchJson(blinkCutoutsPath(coordinates, size, profileId), signal);
   try {
     return parseBlinkResponse(value, (path) => `${API_BASE_URL}${path}`);
   } catch (error) {
@@ -199,7 +200,7 @@ export async function getBlinkCutouts(
   }
 }
 
-/** Which blink modes the server offers (archive-driven and/or the fixed local demo files). */
+/** Which blink modes the server offers (archive-driven and/or the fixed local SPHEREx files). */
 export async function getBlinkModes(signal?: AbortSignal): Promise<BlinkModes> {
   try {
     return parseBlinkModes(await fetchJson('/api/blink/modes', signal));

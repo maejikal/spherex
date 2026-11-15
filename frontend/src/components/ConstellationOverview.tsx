@@ -8,7 +8,7 @@ export function ConstellationOverview({ constellation }: { constellation: Conste
   return (
     <aside tabIndex={0} className="constellation-overview" aria-label={`${constellation.name} constellation overview`}>
       <header className="constellation-overview__heading">
-        <span>Constellation overview</span>
+        <span>You are in the constellation</span>
         <strong>{constellation.name}</strong>
       </header>
       {chart ? <svg className="constellation-overview__chart" viewBox="0 0 240 168" role="img" aria-label={`Full official boundary of ${constellation.name}, with selected position marked by a cyan dot and cross. North up and east left at chart center.`}>

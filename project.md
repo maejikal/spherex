@@ -15,7 +15,7 @@ SDSS Navigate inspired the interaction model, not the current data source. The e
 - **Find:** CDS Sesame resolves object names. Suggested and random destinations use the separately stored tile-verified target dataset. Tile signal is not proof of an individual object's detection.
 - **Inspect:** selected coordinates remain distinct from SIMBAD catalogue positions. Analyze area requests nearby catalogue matches; these are not labelled SPHEREx detections.
 - **Constellations:** selection triggers local Astropy IAU membership; optional sampled official boundaries and a read-only overview provide context independently of catalogue analysis.
-- **Compare epochs:** Analyze area captures a position and opens a Blink viewer. Archive mode discovers and verifies an eligible pair; local demo compares two configured FITS exposures. Playback supports speed, stepping and display zoom. Moving the main camera does not retarget an open analysis.
+- **Compare epochs:** Analyze area captures a position and opens a Blink viewer. Archive mode discovers and verifies an eligible pair; local SPHEREx can select among separately configured FITS pairs without replacing its default region. Playback supports speed, stepping and display zoom. Moving the main camera does not retarget an open analysis.
 - **Workspace:** dark, imagery-first Find / View / Inspect tools support floating and docked desktop layouts. Narrow screens use a single bottom sheet; blink and inspector remain separately accessible.
 
 ## Two distinct image paths
@@ -28,7 +28,7 @@ The browser fetches HiPS metadata and tiles directly from IRSA through the Aladi
 
 FastAPI owns IRSA SIA discovery, observation grouping, detector calibration, candidate ranking, FITS downloads, exact pair verification, WCS resampling and PNG display generation. It returns genuine observation metadata and explicit rejection reasons.
 
-Archive pairs must pass same-detector wavelength/bandwidth, position, calibration and coverage checks. Metadata-based predictions rank candidates; downloaded FITS checks decide acceptance. Shared output TAN grids can rotate to fit the field. The two local files provide a restricted-area demo, not a substitute for failed archive discovery.
+Archive pairs must pass same-detector wavelength/bandwidth, position, calibration and coverage checks. Metadata-based predictions rank candidates; downloaded FITS checks decide acceptance. Shared output TAN grids can rotate to fit the field. Each local FITS pair provides a restricted-area cache of SPHEREx observations, not a substitute for failed archive discovery.
 
 Masking excludes NONFUNC and MISSING_DATA flags; other flags remain visible. Archive mode additionally excludes invalid science/variance and reports caution flags. Resampling is mask-aware bilinear interpolation, not flux conserving. Display uses additive per-frame background subtraction and a common clip/asinh stretch; underlying calibrated values are not multiplicatively normalized. Pair thresholds remain engineering heuristics, not scientifically validated variability criteria.
 
@@ -55,7 +55,7 @@ Actual module map and commands are in the root README. Preserve these boundaries
 ## Current limits
 
 - HiPS order-5 imagery is approximately 12.9 arcseconds/pixel, coarser than native detector sampling. Deep zoom magnifies existing pixels.
-- Local demo files are not bundled; their footprint limits analysis. Archive mode depends on live IRSA availability and can be expensive on first access.
+- Local SPHEREx files are not bundled; their footprint limits analysis. Archive mode depends on live IRSA availability and can be expensive on first access.
 - Same-detector wavelength matching reduces, but does not eliminate, false variability from spectral response, quality flags, backgrounds and interpolation.
 - Sampled constellation outlines and the overview are visual context, not precision boundary tests; membership comes from Astropy.
 - Shared URLs restore the sky view, not a complete analysis session or desktop layout. Caches and random-selection history are not coordinated between workers.

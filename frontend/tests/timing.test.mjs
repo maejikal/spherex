@@ -159,7 +159,7 @@ test('overrun: no "00:55 / ~00:45", no negative remainder, no new promise; bound
   assert.equal(clockView(300_000, 45_000).estimate, null);
 });
 
-test('local demo: elapsed only, with a short estimate only after measured local durations', () => {
+test('local SPHEREx: elapsed only, with a short estimate only after measured local durations', () => {
   const h = new DurationHistory();
   assert.equal(estimateTotalMs('local', h), null);
   const noEstimate = clockView(3000, estimateTotalMs('local', h));

@@ -3,9 +3,10 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Compass, Eye, Search, Share2, SlidersHorizontal, Telescope } from 'lucide-react';
 import { getApiHealth, getConstellation } from './api/client.ts';
-import type { BlinkMode, ExplorerView } from './api/types.ts';
+import type { BlinkAnalysis, BlinkMode, ExplorerView } from './api/types.ts';
 import { AladinSkyViewer, type ViewerStatus } from './components/AladinSkyViewer.tsx';
 import { BlinkViewer } from './components/BlinkViewer.tsx';
+import { CommunityReview } from './components/review/CommunityReview.tsx';
 import { InspectPanel, FindPanel, ViewPanel } from './components/Panels.tsx';
 import { ToolWindow } from './components/ToolWindow.tsx';
 import {
@@ -55,7 +56,7 @@ export default function App() {
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [shareFallback, setShareFallback] = useState<string | null>(null);
   const [analysisRequested, setAnalysisRequested] = useState(false);
-  const [constellationBoundary, setConstellationBoundary] = useState(false);
+  const [constellationBoundary, setConstellationBoundary] = useState(true);
   // Every explicit navigation supersedes a name/random lookup still in flight (BUG-006) and re-syncs
   // the Find panel's coordinate fields (BUG-008).
   const [navigationGuard] = useState(() => new NavigationGuard());
@@ -78,9 +79,10 @@ export default function App() {
   // The Blink Viewer is opened only by Analyze area. Its position is captured at that click, so neither a
   // later selection nor moving the sky viewer changes (or re-requests) an analysis that is already open.
   const [blinkOpen, setBlinkOpen] = useState(false);
-  const [blinkTarget, setBlinkTarget] = useState<SkyCoordinates | null>(null);
-  // Archive (dynamic) analysis is preferred; the local demo is only used when chosen explicitly (never as a silent fallback).
+  const [blinkTarget, setBlinkTarget] = useState<(SkyCoordinates & { name?: string }) | null>(null);
+  // Archive (dynamic) analysis is preferred; the local SPHEREx is only used when chosen explicitly (never as a silent fallback).
   const [blinkMode, setBlinkMode] = useState<BlinkMode>('dynamic');
+  const [flaggedAnalysis, setFlaggedAnalysis] = useState<BlinkAnalysis | null>(null);
 
   useEffect(() => {
     const narrowViewport = window.matchMedia('(max-width: 760px)');
@@ -152,6 +154,10 @@ export default function App() {
   useEffect(() => {
     const handlePopState = () => {
       const previousView = parseViewSearch(window.location.search);
+      const currentView = useExplorerStore.getState().view;
+      // Review-only history entries must not clear sky selection or reset analysis.
+      if (previousView && currentView && serializeViewSearch(previousView) === serializeViewSearch(currentView)) return;
+      if (!previousView && !currentView) return;
       explicitNavigation();
       setView(previousView, 'none');
       setHomeView(previousView);
@@ -183,7 +189,7 @@ export default function App() {
     setView(nextView, 'push');
     setHomeView(nextView);
     // Keep a cross marker on the requested position after recentering.
-    setSelection({ ...coordinates, accuracy: 'projection' });
+    setSelection({ ...coordinates, name: label, accuracy: 'projection' });
     setAnalysisRequested(false);
     setAnnouncement(label
       ? `Requested ${label} at RA ${formatCoordinate(nextView.ra, 4)}°, Dec ${formatCoordinate(nextView.dec, 4)}°.`
@@ -257,7 +263,7 @@ export default function App() {
   const selectPosition = useCallback((coordinates: SkyCoordinates) => {
     setSelection({ ...coordinates, accuracy: 'projection' });
     setAnalysisRequested(false);
-    setAnnouncement(`Selected position: RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°. Double-click to center; choose Analyze area to search nearby SIMBAD objects.`);
+    setAnnouncement(`Selected position: RA ${formatCoordinate(coordinates.ra, 5)}°, Dec ${formatCoordinate(coordinates.dec, 5)}°. Double-click to center or Analyze area to search SIMBAD.`);
   }, [setSelection]);
 
   const centerPosition = useCallback((coordinates: SkyCoordinates) => {
@@ -279,7 +285,7 @@ export default function App() {
     if (!selected) return;
     // Existing behaviour: SIMBAD analysis in the Inspect window. New: the Blink Viewer opens alongside it.
     setAnalysisRequested(true);
-    setBlinkTarget({ ra: selected.ra, dec: selected.dec });
+    setBlinkTarget({ ra: selected.ra, dec: selected.dec, name: selected.name });
     const compactNow = window.matchMedia('(max-width: 760px)').matches;
     setPanels((current) => panelsForAnalysis(current, compactNow));
     setBlinkOpen(true);
@@ -296,12 +302,12 @@ export default function App() {
   const copySelection = useCallback(async () => {
     const selected = useExplorerStore.getState().selection;
     if (!selected) return;
-    const value = `${formatCoordinate(selected.ra, 6)}°, ${selected.dec >= 0 ? '+' : ''}${formatCoordinate(selected.dec, 6)}°`;
+    const value = `${formatCoordinate(selected.ra, 5)}°, ${selected.dec >= 0 ? '+' : ''}${formatCoordinate(selected.dec, 5)}°`;
     try {
       await navigator.clipboard.writeText(value);
       setAnnouncement('Selected coordinates copied.');
     } catch {
-      setAnnouncement(`Selected coordinates: RA ${formatCoordinate(selected.ra, 6)}°, Dec ${selected.dec >= 0 ? '+' : ''}${formatCoordinate(selected.dec, 6)}°.`);
+      setAnnouncement(`Selected coordinates: RA ${formatCoordinate(selected.ra, 5)}°, Dec ${selected.dec >= 0 ? '+' : ''}${formatCoordinate(selected.dec, 5)}°.`);
     }
   }, []);
 
@@ -363,12 +369,15 @@ export default function App() {
           </div>
         )}
         <div className="tool-toolbar" role="group" aria-label="Explorer tools">
+          <div className="explorer-actions">
           <ToolbarButton id="find" label="Find" active={panels.find} onClick={() => togglePanel('find')}><Search size={16} aria-hidden="true" /></ToolbarButton>
           <ToolbarButton id="view" label="View" active={panels.view} onClick={() => togglePanel('view')}><SlidersHorizontal size={16} aria-hidden="true" /></ToolbarButton>
           <ToolbarButton id="inspect" label="Inspect" active={panels.inspect} onClick={() => togglePanel('inspect')}><Eye size={16} aria-hidden="true" /></ToolbarButton>
           <button className="button button--secondary toolbar-share" type="button" onClick={() => void shareView()} disabled={!view} aria-describedby="share-hint">
             <Share2 size={15} aria-hidden="true" /><span>Share view</span>
           </button>
+          </div>
+          <CommunityReview analysis={flaggedAnalysis} onDraftClosed={() => setFlaggedAnalysis(null)} />
         </div>
         <div className={apiStatusClass} title="FastAPI connection status">
           <Activity aria-hidden="true" size={14} />
@@ -471,11 +480,19 @@ export default function App() {
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, inspect: false }))}
         >
-          <InspectPanel constellation={{ lookup: constellation, boundaryEnabled: constellationBoundary, onBoundaryChange: setConstellationBoundary }} selection={selection} view={view} survey={survey.data} loading={viewerStatus.loading} analysisEnabled={analysisRequested} />
+          <InspectPanel
+            constellation={{ lookup: constellation, boundaryEnabled: constellationBoundary, onBoundaryChange: setConstellationBoundary }}
+            selection={selection}
+            view={view}
+            survey={survey.data}
+            loading={viewerStatus.loading}
+            analysisEnabled={analysisRequested}
+          />
         </ToolWindow>
 
         <ToolWindow
           id="blink"
+          preferredHeight={700}
           title="Blink viewer"
           subtitle={blinkTarget ? `SPHEREx · RA ${formatCoordinate(blinkTarget.ra, 4)}°, Dec ${blinkTarget.dec >= 0 ? '+' : ''}${formatCoordinate(blinkTarget.dec, 4)}°` : undefined}
           open={blinkOpen}
@@ -491,10 +508,10 @@ export default function App() {
           workspaceRef={workspaceRef}
           onClose={() => setBlinkOpen(false)}
         >
-          <BlinkViewer target={blinkTarget} mode={blinkMode} onModeChange={setBlinkMode} onGoToCoveredRegion={navigateTo} />
+          <BlinkViewer onFlagForReview={setFlaggedAnalysis} target={blinkTarget} mode={blinkMode} onModeChange={setBlinkMode} onGoToCoveredRegion={navigateTo} />
         </ToolWindow>
 
-        {announcement && <p className="workspace-announcement" role="status" aria-live="polite">{announcement}</p>}
+        {announcement && <p className={`workspace-announcement${announcement.startsWith('Selected position:') ? ' workspace-announcement--selection' : ''}`} role="status" aria-live="polite">{announcement}</p>}
       </main>
       <footer className="app-footer">
         <span><Compass aria-hidden="true" size={13} /> ICRS / equatorial coordinates</span>

@@ -33,3 +33,20 @@ test('BUG-008: explicit navigation or reset hands the fields back to the viewer'
   assert.deepEqual(draft, { ra: '84.25', dec: '-5.5', edited: false });
   assert.deepEqual(syncDraft(null), { ra: '', dec: '', edited: false });
 });
+
+test('HMS/DMS display wraps rounded RA and preserves negative declination below one degree', async () => {
+  const { sexagesimalFromView } = await import('../src/state/coordinateDraft.ts');
+  const { parseSexagesimalCoordinateInput } = await import('../src/sky/coordinates.ts');
+  assert.deepEqual(sexagesimalFromView(null), {
+    raHours: '', raMinutes: '', raSeconds: '', decSign: '+', decDegrees: '', decMinutes: '', decSeconds: '',
+  });
+  assert.equal(sexagesimalFromView({ ra: 359.9999999, dec: 0 }).raHours, '0');
+  const fields = sexagesimalFromView({ ra: 269.446305, dec: -0.25 });
+  assert.equal(fields.decSign, '-');
+  assert.equal(fields.decDegrees, '0');
+  assert.equal(fields.decMinutes, '15');
+  const parsed = parseSexagesimalCoordinateInput(fields);
+  assert.equal(parsed.ok, true);
+  assert.ok(Math.abs(parsed.value.ra - 269.446305) < 0.000003);
+  assert.equal(parsed.value.dec, -0.25);
+});

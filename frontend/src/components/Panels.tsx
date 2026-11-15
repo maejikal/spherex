@@ -19,9 +19,9 @@ import {
 } from 'lucide-react';
 import { findNearbyObjects, getRandomTarget, listSuggestedTargets, resolveObjectName } from '../api/client.ts';
 import type { CatalogObject, ExplorerView } from '../api/types.ts';
-import type { SkyCoordinates } from '../sky/coordinates.ts';
-import { calculateFieldOfView, formatCoordinate, parseCoordinateInput } from '../sky/coordinates.ts';
-import { draftFromView, editDraft, followView, syncDraft } from '../state/coordinateDraft.ts';
+import type { SexagesimalCoordinateInput, SkyCoordinates } from '../sky/coordinates.ts';
+import { calculateFieldOfView, formatCoordinate, parseCoordinateInput, parseSexagesimalCoordinateInput } from '../sky/coordinates.ts';
+import { draftFromView, editDraft, followView, syncDraft, sexagesimalFromView } from '../state/coordinateDraft.ts';
 import { isAbortError } from '../state/navigationGuard.ts';
 import type { NavigationGuard, NavigationTicket } from '../state/navigationGuard.ts';
 import { channelForFrame, channelLabel, formatWavelength, resolveFrame } from '../sky/spherex/channels.ts';
@@ -42,13 +42,18 @@ export function FindPanel({ view, onNavigate, navigationGuard, syncRevision }: F
   const [objectName, setObjectName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
   const [draft, setDraft] = useState(() => draftFromView(view));
+  const [coordinateFormat, setCoordinateFormat] = useState<'decimal' | 'sexagesimal'>('decimal');
+  const [sexagesimal, setSexagesimal] = useState(() => sexagesimalFromView(view));
   const [coordinateError, setCoordinateError] = useState<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const viewRef = useRef(view);
   viewRef.current = view;
 
   // Viewer movement updates the fields only while the user is not editing them (BUG-008).
   useEffect(() => {
     setDraft((current) => followView(current, viewRef.current));
+    if (!draftRef.current.edited) setSexagesimal(sexagesimalFromView(viewRef.current));
   }, [view?.ra, view?.dec]);
 
   const targets = useQuery({
@@ -73,6 +78,7 @@ export function FindPanel({ view, onNavigate, navigationGuard, syncRevision }: F
   // An explicit navigation (from here or elsewhere) shows the new position and clears obsolete errors.
   useEffect(() => {
     setDraft(syncDraft(viewRef.current));
+    setSexagesimal(sexagesimalFromView(viewRef.current));
     setCoordinateError(null);
   }, [syncRevision]);
 
@@ -120,12 +126,40 @@ export function FindPanel({ view, onNavigate, navigationGuard, syncRevision }: F
   const submitCoordinates = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setCoordinateError(null);
-    const result = parseCoordinateInput(draft.ra, draft.dec);
+    const result = coordinateFormat === 'sexagesimal'
+      ? parseSexagesimalCoordinateInput(sexagesimal)
+      : parseCoordinateInput(draft.ra, draft.dec);
     if (!result.ok || !result.value) {
       setCoordinateError(result.error ?? 'Enter valid ICRS coordinates.');
       return;
     }
     onNavigate(result.value);
+  };
+
+  const switchCoordinateFormat = (nextFormat: 'decimal' | 'sexagesimal') => {
+    if (nextFormat === 'sexagesimal') {
+      const parsed = parseCoordinateInput(draft.ra, draft.dec);
+      if (!parsed.ok || !parsed.value) {
+        setCoordinateError(parsed.error ?? 'Enter valid ICRS coordinates.');
+        return;
+      }
+      setSexagesimal(sexagesimalFromView(parsed.value));
+    } else {
+      const parsed = parseSexagesimalCoordinateInput(sexagesimal);
+      if (!parsed.ok || !parsed.value) {
+        setCoordinateError(parsed.error ?? 'Enter valid ICRS coordinates.');
+        return;
+      }
+      setDraft({ ...draftFromView(parsed.value), edited: draft.edited });
+    }
+    setCoordinateFormat(nextFormat);
+    setCoordinateError(null);
+  };
+
+  const editSexagesimal = (field: keyof SexagesimalCoordinateInput, value: string) => {
+    setSexagesimal((current) => ({ ...current, [field]: value }));
+    setDraft((current) => ({ ...current, edited: true }));
+    setCoordinateError(null);
   };
 
   return (
@@ -163,13 +197,19 @@ export function FindPanel({ view, onNavigate, navigationGuard, syncRevision }: F
       <section className="panel-section" aria-labelledby="find-coordinates-heading">
         <div className="find-section-heading">
           <h3 id="find-coordinates-heading">Go to coordinates</h3>
+          <div className="coordinate-format-toggle" role="group" aria-label="Coordinate format">
+            <button type="button" aria-pressed={coordinateFormat === 'decimal'} onClick={() => switchCoordinateFormat('decimal')}>Decimal</button>
+            <span aria-hidden="true">|</span>
+            <button type="button" aria-pressed={coordinateFormat === 'sexagesimal'} onClick={() => switchCoordinateFormat('sexagesimal')}>HMS/DMS</button>
+          </div>
         </div>
         {/* Native range checks run first; an invalid submit must not leave an older message beside the browser's. */}
         <form className="form-stack find-coordinate-form" onSubmit={submitCoordinates} onInvalidCapture={() => setCoordinateError(null)}>
-          <div className="coordinate-fields">
+          {coordinateFormat === 'decimal' ? <div className="coordinate-fields">
             <label className="field">
               <span>RA · degrees</span>
               <input
+                id="coordinate-ra"
                 type="number"
                 inputMode="decimal"
                 min="0"
@@ -195,7 +235,54 @@ export function FindPanel({ view, onNavigate, navigationGuard, syncRevision }: F
                 aria-describedby={coordinateError ? 'coordinate-error' : undefined}
               />
             </label>
-          </div>
+          </div> : <div className="coordinate-fields coordinate-fields--sexagesimal">
+            <fieldset className="field coordinate-sexagesimal" aria-label="Right ascension in hours, minutes, and seconds">
+              <legend className="coordinate-sexagesimal__legend">RA · HMS</legend>
+              {([
+                ['raHours', 'Hours', '0–23'],
+                ['raMinutes', 'Minutes', '0–59'],
+                ['raSeconds', 'Seconds', '0–<60'],
+              ] as const).map(([key, label, placeholder]) => (
+                <label className="coordinate-sexagesimal__field" key={key}>
+                  <span>{label}</span>
+                  <input
+                    type="number" inputMode="decimal" min="0" max={key === 'raHours' ? '23' : key === 'raMinutes' ? '59' : undefined}
+                    step={key === 'raSeconds' ? 'any' : '1'} value={sexagesimal[key]} placeholder={placeholder}
+                    onChange={(event) => editSexagesimal(key, event.target.value)}
+                    aria-label={`Right ascension ${label.toLowerCase()}`}
+                    aria-describedby={coordinateError ? 'coordinate-error' : undefined}
+                  />
+                </label>
+              ))}
+            </fieldset>
+            <fieldset className="field coordinate-sexagesimal" aria-label="Declination in degrees, minutes, and seconds">
+              <legend className="coordinate-sexagesimal__legend">
+                <span>Dec · DMS</span>
+                <label className="coordinate-sexagesimal__sign-control">
+                  <select className="coordinate-sexagesimal__sign" aria-label="Declination sign" title="Declination sign" value={sexagesimal.decSign} onChange={(event) => editSexagesimal('decSign', event.target.value)}>
+                    <option value="+">+</option>
+                    <option value="-">−</option>
+                  </select>
+                </label>
+              </legend>
+              {([
+                ['decDegrees', 'Degrees', '0–90'],
+                ['decMinutes', 'Minutes', '0–59'],
+                ['decSeconds', 'Seconds', '0–<60'],
+              ] as const).map(([key, label, placeholder]) => (
+                <label className="coordinate-sexagesimal__field" key={key}>
+                  <span>{label}</span>
+                  <input
+                    type="number" inputMode="decimal" min="0" max={key === 'decDegrees' ? '90' : key === 'decMinutes' ? '59' : undefined}
+                    step={key === 'decSeconds' ? 'any' : '1'} value={sexagesimal[key]} placeholder={placeholder}
+                    onChange={(event) => editSexagesimal(key, event.target.value)}
+                    aria-label={`Declination ${label.toLowerCase()}`}
+                    aria-describedby={coordinateError ? 'coordinate-error' : undefined}
+                  />
+                </label>
+              ))}
+            </fieldset>
+          </div>}
           {coordinateError && <div id="coordinate-error"><InlineError message={coordinateError} /></div>}
           <button className="button button--primary button--full" type="submit">Go to coordinates</button>
         </form>
@@ -356,7 +443,14 @@ interface InspectPanelProps {
   analysisEnabled: boolean;
 }
 
-export function InspectPanel({ constellation, selection, view, survey, loading, analysisEnabled }: InspectPanelProps) {
+export function InspectPanel({
+  constellation,
+  selection,
+  view,
+  survey,
+  loading,
+  analysisEnabled,
+}: InspectPanelProps) {
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const nearby = useQuery({
     queryKey: ['objects', 'nearby', selection?.ra, selection?.dec],
@@ -368,7 +462,7 @@ export function InspectPanel({ constellation, selection, view, survey, loading, 
 
   const copyCoordinates = async () => {
     if (!selection) return;
-    const value = `${formatCoordinate(selection.ra, 6)}°, ${selection.dec >= 0 ? '+' : ''}${formatCoordinate(selection.dec, 6)}°`;
+    const value = `${formatCoordinate(selection.ra, 5)}°, ${selection.dec >= 0 ? '+' : ''}${formatCoordinate(selection.dec, 5)}°`;
     try {
       await navigator.clipboard.writeText(value);
       setCopyMessage('Selected coordinates copied.');
@@ -388,8 +482,8 @@ export function InspectPanel({ constellation, selection, view, survey, loading, 
         </div>
         {selection ? (
           <div className="coordinate-readout">
-            <div><span>RA · ICRS</span><strong>{formatCoordinate(selection.ra, 6)}°</strong></div>
-            <div><span>Dec · ICRS</span><strong>{selection.dec >= 0 ? '+' : ''}{formatCoordinate(selection.dec, 6)}°</strong></div>
+            <div><span>RA · ICRS</span><strong>{formatCoordinate(selection.ra, 5)}°</strong></div>
+            <div><span>Dec · ICRS</span><strong>{selection.dec >= 0 ? '+' : ''}{formatCoordinate(selection.dec, 5)}°</strong></div>
             <span className="status-badge">Selected</span>
           </div>
         ) : (

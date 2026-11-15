@@ -89,7 +89,7 @@ export interface BlinkAnalysis extends SkyCoordinates {
   frames: BlinkFrame[];
   commonCoverageFraction: number;
   warnings: string[];
-  /** `dynamic`: pair chosen from the NASA/IPAC archive for this position. `local`: the two fixed demo files. */
+  /** `dynamic`: pair chosen from the NASA/IPAC archive for this position. `local`: selected fixed local FITS pair. */
   mode: BlinkMode;
   fovDeg?: number;
   rotationDeg?: number;
@@ -101,4 +101,10 @@ export interface BlinkAnalysis extends SkyCoordinates {
 export interface BlinkModes {
   dynamicEnabled: boolean;
   localDemoAvailable: boolean;
+  localProfiles: BlinkLocalProfile[];
+}
+
+export interface BlinkLocalProfile {
+  id: string;
+  label: string;
 }

@@ -12,6 +12,8 @@ interface ToolWindowProps {
   placement: Placement;
   /** Docked panels and mobile sheets retain content and floating position, but cannot be moved. */
   movable?: boolean;
+  /** Preferred fixed height for media tools; resize/reposition before sacrificing their content area. */
+  preferredHeight?: number;
   /**
    * How keyboard users move the window. `button` (default): a visible Move button toggles arrow-key movement.
    * `header`: no visible control; the focusable title bar does the same (Space/Enter, then arrows, Escape to stop).
@@ -47,6 +49,7 @@ export function ToolWindow({
   open,
   placement,
   movable = true,
+  preferredHeight,
   keyboardMove: keyboardMoveMode = 'button',
   anchorId,
   boundsId,
@@ -61,7 +64,7 @@ export function ToolWindow({
   const pointerDrag = useRef<{ pointerId: number; x: number; y: number; origin: Position } | null>(null);
   const [position, setPosition] = useState<Position | null>(null);
   const [keyboardMove, setKeyboardMove] = useState(false);
-  /** Size cap from `boundsId`; null when confined to the workspace (the stylesheet's limits apply). */
+  /** Live size cap from the confinement area, including the workspace after a manual move. */
   const [limit, setLimit] = useState<{ width: number; height: number } | null>(null);
   /**
    * While a window sits where it was auto-placed, it may not grow past the bottom of its area: growing
@@ -85,9 +88,9 @@ export function ToolWindow({
     // Only the first open is placed automatically; afterwards `position` holds wherever the user left it.
     const anchor = boxOf(anchorId, workspace);
     const area = confinement(workspace, boundsId);
-    const nextLimit = boundsId ? limitFor(area) : null;
+    const nextLimit = limitFor(area);
     setLimit(nextLimit);
-    const size = effectiveSize(panel, nextLimit);
+    const size = effectiveSize(panel, nextLimit, preferredHeight);
     const preferred = initialPosition({
       placement,
       workspace: { width: workspace.clientWidth, height: workspace.clientHeight },
@@ -96,16 +99,16 @@ export function ToolWindow({
     });
     const obstacles = (avoidIds ?? []).map((other) => boxOf(other, workspace)).filter((box): box is Box => box !== null);
     if (obstacles.length > 0) {
-      const placed = placeAvoiding({ preferred, area, panel: size, obstacles });
-      autoPlaced.current = true;
-      setHeightCap(Math.max(MIN_AUTO_HEIGHT, Math.floor(area.y + area.height - placed.y - 8)));
+      const placed = placeAvoiding({ preferred, area, panel: size, obstacles, minHeight: preferredHeight ? size.height : undefined });
+      autoPlaced.current = preferredHeight === undefined;
+      setHeightCap(preferredHeight === undefined ? Math.max(MIN_AUTO_HEIGHT, Math.floor(area.y + area.height - placed.y - 8)) : null);
       setPosition({ x: placed.x, y: placed.y });
     } else {
       autoPlaced.current = false;
       setHeightCap(null);
       setPosition(clampToArea(preferred, area, size));
     }
-  }, [open, movable, placement, anchorId, boundsId, avoidIds, position, workspaceRef]);
+  }, [open, movable, preferredHeight, placement, anchorId, boundsId, avoidIds, position, workspaceRef]);
 
   useLayoutEffect(() => {
     if (!open || !movable) return;
@@ -116,9 +119,9 @@ export function ToolWindow({
     // Re-confine on any resize, including the docked columns opening/closing and switching layout.
     const reconfine = () => {
       const area = confinement(workspace, boundsId);
-      const nextLimit = boundsId ? limitFor(area) : null;
+      const nextLimit = limitFor(area);
       setLimit((current) => current?.width === nextLimit?.width && current?.height === nextLimit?.height ? current : nextLimit);
-      const size = effectiveSize(panel, nextLimit);
+      const size = effectiveSize(panel, nextLimit, preferredHeight);
       setPosition((current) => {
         if (!current) return current;
         const cap = autoPlaced.current ? Math.max(MIN_AUTO_HEIGHT, Math.floor(area.y + area.height - current.y - 8)) : null;
@@ -134,7 +137,7 @@ export function ToolWindow({
     if (bounds) observer.observe(bounds);
     reconfine();
     return () => observer.disconnect();
-  }, [open, movable, boundsId, workspaceRef]);
+  }, [open, movable, preferredHeight, boundsId, workspaceRef]);
 
   if (!open) return null;
 
@@ -143,7 +146,7 @@ export function ToolWindow({
     const panel = panelRef.current;
     if (!workspace || !panel || !position) return;
     autoPlaced.current = false;
-    setPosition(clampToArea({ x: position.x + dx, y: position.y + dy }, confinement(workspace, boundsId), effectiveSize(panel, limit)));
+    setPosition(clampToArea({ x: position.x + dx, y: position.y + dy }, confinement(workspace, boundsId), effectiveSize(panel, limit, preferredHeight)));
   };
 
   /** Arrow keys move the window while keyboard-move mode is on; Escape leaves it. Shared by both modes. */
@@ -169,6 +172,7 @@ export function ToolWindow({
       className={`tool-window tool-window--${id}`}
       aria-label={title}
       style={movable ? {
+        height: preferredHeight,
         left: position ? position.x : placement === 'right-top' ? undefined : 16,
         right: !position && placement === 'right-top' ? 16 : undefined,
         top: position ? position.y : placement === 'left-bottom' ? undefined : 16,
@@ -221,7 +225,7 @@ export function ToolWindow({
             clampToArea(
               { x: drag.origin.x + event.clientX - drag.x, y: drag.origin.y + event.clientY - drag.y },
               confinement(workspace, boundsId),
-              effectiveSize(panel, limit),
+              effectiveSize(panel, limit, preferredHeight),
             ),
           );
         }}
@@ -282,8 +286,8 @@ function limitFor(area: Box): { width: number; height: number } {
 }
 
 /** The window's rendered size once the size cap applies (the cap may not have been rendered yet). */
-function effectiveSize(panel: HTMLElement, limit: { width: number; height: number } | null): { width: number; height: number } {
+function effectiveSize(panel: HTMLElement, limit: { width: number; height: number } | null, preferredHeight?: number): { width: number; height: number } {
   return limit
-    ? { width: Math.min(panel.offsetWidth, limit.width), height: Math.min(panel.offsetHeight, limit.height) }
-    : { width: panel.offsetWidth, height: panel.offsetHeight };
+    ? { width: Math.min(panel.offsetWidth, limit.width), height: Math.min(preferredHeight ?? panel.offsetHeight, limit.height) }
+    : { width: panel.offsetWidth, height: preferredHeight ?? panel.offsetHeight };
 }

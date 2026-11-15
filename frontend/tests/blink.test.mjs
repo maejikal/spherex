@@ -5,6 +5,7 @@ import {
   activeTimer,
   BLINK_INTERVALS_MS,
   DEFAULT_BLINK_INTERVAL_MS,
+  frameDirectionForKey,
   initialPlayer,
   nextZoom,
   playerReducer,
@@ -70,6 +71,9 @@ test('the request carries exactly the coordinates captured when Analyze was clic
   assert.equal(url.searchParams.get('ra'), '210.541234567');
   assert.equal(url.searchParams.get('dec'), '-54.46');
   assert.equal(url.searchParams.get('size'), '256');
+  assert.equal(url.searchParams.has('profile'), false);
+  const barnard = new URL(blinkCutoutsPath({ ra: 269.446305, dec: 4.767740 }, 256, 'barnards-star'), 'http://x');
+  assert.equal(barnard.searchParams.get('profile'), 'barnards-star');
 });
 
 // ---- window state transitions --------------------------------------------------------------------
@@ -130,7 +134,14 @@ test('without Inspect on screen it falls back to the bottom centre', () => {
 test('starts paused on the first frame at 0.5 s', () => {
   assert.deepEqual(initialPlayer(), { frame: 0, playing: false, intervalMs: 500 });
   assert.equal(DEFAULT_BLINK_INTERVAL_MS, 500);
-  assert.deepEqual([...BLINK_INTERVALS_MS], [250, 500, 1000, 2000]);
+  assert.deepEqual([...BLINK_INTERVALS_MS], [100, 250, 500]);
+});
+
+test('left and right arrow keys map to previous and next frames only', () => {
+  assert.equal(frameDirectionForKey('ArrowLeft'), -1);
+  assert.equal(frameDirectionForKey('ArrowRight'), 1);
+  assert.equal(frameDirectionForKey('ArrowUp'), null);
+  assert.equal(frameDirectionForKey(' '), null);
 });
 
 test('play alternates between the two frames and wraps', () => {
@@ -164,13 +175,16 @@ test('previous / next step with wrap-around and pause playback', () => {
 
 test('speed changes keep the frame and playing state, and only allow the offered speeds', () => {
   const playing = { frame: 1, playing: true, intervalMs: 500 };
+  assert.deepEqual([100, 250, 500].map((intervalMs) => playerReducer(playing, { type: 'speed', intervalMs }).intervalMs), [100, 250, 500]);
   assert.deepEqual(playerReducer(playing, { type: 'speed', intervalMs: 250 }), { frame: 1, playing: true, intervalMs: 250 });
   assert.equal(playerReducer(playing, { type: 'speed', intervalMs: 3 }), playing);
+  assert.equal(playerReducer(playing, { type: 'speed', intervalMs: 1000 }), playing);
+  assert.equal(playerReducer(playing, { type: 'speed', intervalMs: 2000 }), playing);
 });
 
 test('exactly one timer runs, at the current speed, only while playing with images ready', () => {
-  const playing = { frame: 0, playing: true, intervalMs: 1000 };
-  assert.equal(activeTimer(playing, 2, true), 1000);
+  const playing = { frame: 0, playing: true, intervalMs: 500 };
+  assert.equal(activeTimer(playing, 2, true), 500);
   assert.equal(activeTimer({ ...playing, intervalMs: 250 }, 2, true), 250); // new speed replaces the interval
   assert.equal(activeTimer(playing, 2, false), null); // images still loading
   assert.equal(activeTimer({ ...playing, playing: false }, 2, true), null); // paused: timer cleared
@@ -284,12 +298,23 @@ test('the archive request carries the captured coordinates and the field of view
 });
 
 test('server modes are parsed strictly', () => {
-  assert.deepEqual(parseBlinkModes({ dynamic_enabled: true, local_demo_available: false }), { dynamicEnabled: true, localDemoAvailable: false });
-  assert.deepEqual(parseBlinkModes({ dynamic_enabled: 'yes' }), { dynamicEnabled: false, localDemoAvailable: false });
+  assert.deepEqual(parseBlinkModes({ dynamic_enabled: true, local_demo_available: false }), { dynamicEnabled: true, localDemoAvailable: false, localProfiles: [] });
+  assert.deepEqual(parseBlinkModes({
+    dynamic_enabled: true,
+    local_demo_available: true,
+    local_profiles: [{ id: 'default', label: 'Local demo (real SPHEREx)' }, { id: 'barnards-star', label: "Barnard's Star" }],
+  }), {
+    dynamicEnabled: true,
+    localDemoAvailable: true,
+    localProfiles: [{ id: 'default', label: 'Local demo (real SPHEREx)' }, { id: 'barnards-star', label: "Barnard's Star" }],
+  });
+  assert.throws(() => parseBlinkModes({ dynamic_enabled: true, local_profiles: [{ id: '../fits', label: 'Unsafe' }] }), BlinkResponseError);
+  assert.throws(() => parseBlinkModes({ dynamic_enabled: true, local_profiles: [{ id: 'same', label: 'A' }, { id: 'same', label: 'B' }] }), BlinkResponseError);
+  assert.deepEqual(parseBlinkModes({ dynamic_enabled: 'yes' }), { dynamicEnabled: false, localDemoAvailable: false, localProfiles: [] });
   assert.throws(() => parseBlinkModes(null), BlinkResponseError);
 });
 
-test('archive mode is preferred; the local demo is chosen only explicitly or when archive mode is off', () => {
+test('archive mode is preferred; the local SPHEREx is chosen only explicitly or when archive mode is off', () => {
   const both = { dynamicEnabled: true, localDemoAvailable: true };
   assert.equal(resolveBlinkMode('dynamic', both), 'dynamic');
   assert.equal(resolveBlinkMode('local', both), 'local'); // an explicit choice is respected
@@ -314,8 +339,11 @@ test('queries are keyed by mode and position so a mode switch or a new analysis 
   assert.notDeepEqual(blinkQueryKey('dynamic', t, 0.1), blinkQueryKey('local', t, 256));
   assert.notDeepEqual(blinkQueryKey('dynamic', t, 0.1), blinkQueryKey('dynamic', { ra: 210.9, dec: 54.3 }, 0.1));
   assert.deepEqual(blinkQueryKey('dynamic', t, 0.1), blinkQueryKey('dynamic', { ...t }, 0.1));
+  assert.deepEqual(blinkQueryKey('dynamic', t, 0.1, 'default'), blinkQueryKey('dynamic', t, 0.1, 'barnards-star'));
+  assert.notDeepEqual(blinkQueryKey('local', t, 256), blinkQueryKey('local', t, 256, 'default'));
+  assert.notDeepEqual(blinkQueryKey('local', t, 256, 'default'), blinkQueryKey('local', t, 256, 'barnards-star'));
   assert.equal(modeLabel('dynamic'), 'SPHEREx archive');
-  assert.equal(modeLabel('local'), 'Local demo');
+  assert.equal(modeLabel('local'), 'Local SPHEREx');
 });
 
 test('each archive failure reason gets its own explanation and only transient ones are retryable', () => {

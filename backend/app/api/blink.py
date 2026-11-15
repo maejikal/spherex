@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import Response
 
 import calendar
-from pathlib import Path as FsPath
 
 from ..models.errors import InvalidParameters
 from ..models.blink import (
@@ -22,15 +21,16 @@ router = APIRouter(tags=["blink"])
 Ra = Annotated[float, Query(ge=0, lt=360, allow_inf_nan=False, description="ICRS right ascension, degrees")]
 Dec = Annotated[float, Query(ge=-90, le=90, allow_inf_nan=False, description="ICRS declination, degrees")]
 Size = Annotated[int | None, Query(ge=1, le=4096, description="Cutout edge in pixels (default from settings)")]
+LocalProfile = Annotated[str | None, Query(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")]
 
 IMAGE_CACHE_CONTROL = "public, max-age=3600"
 
 
-def _image_url(frame_id: str, ra: float, dec: float, size: int) -> str:
-    return f"/api/blink/images/{frame_id}.png?" + urlencode({"ra": f"{ra:.6f}", "dec": f"{dec:.6f}", "size": size})
+def _image_url(frame_id: str, ra: float, dec: float, size: int, profile_id: str) -> str:
+    return f"/api/blink/images/{frame_id}.png?" + urlencode({"ra": f"{ra:.6f}", "dec": f"{dec:.6f}", "size": size, "profile": profile_id})
 
 
-def _to_response(result: BlinkResult) -> BlinkResponse:
+def _to_response(result: BlinkResult, profile_id: str) -> BlinkResponse:
     cutouts = result.cutouts
     frames = []
     for frame, background in zip(cutouts.frames, result.display.background):
@@ -45,7 +45,7 @@ def _to_response(result: BlinkResult) -> BlinkResponse:
                 mjd=info.mjd,
                 obsid=info.obsid,
                 detector=info.detector,
-                image_url=_image_url(info.frame_id, cutouts.ra, cutouts.dec, cutouts.size),
+                image_url=_image_url(info.frame_id, cutouts.ra, cutouts.dec, cutouts.size, profile_id),
                 coverage_fraction=round(frame.coverage_fraction, 4),
                 wavelength_um=WavelengthRange(min=wave[0], max=wave[1], mean=wave[2]) if wave else None,
                 background_mjy_sr=background,
@@ -74,9 +74,19 @@ def _to_response(result: BlinkResult) -> BlinkResponse:
 
 # Plain ``def`` handlers: FastAPI runs them in its thread pool, so FITS/NumPy work never blocks the event loop.
 @router.get("/blink/cutouts", response_model=BlinkResponse, response_model_exclude_none=True)
-def blink_cutouts(ra: Ra, dec: Dec, services: Annotated[Services, Depends(get_services)], size: Size = None) -> BlinkResponse:
-    """Aligned May/December SPHEREx cutouts of one sky position, from the two configured local FITS files."""
-    return _to_response(services.blink.cutouts(ra, dec, size))
+def blink_cutouts(
+    ra: Ra,
+    dec: Dec,
+    services: Annotated[Services, Depends(get_services)],
+    size: Size = None,
+    profile: LocalProfile = None,
+) -> BlinkResponse:
+    """Auto-match a usable local FITS pair to the position, or request an explicit profile."""
+    if profile is None:
+        profile, result = services.blink.select_cutouts(ra, dec, size)
+    else:
+        result = services.blink.cutouts(ra, dec, size, profile)
+    return _to_response(result, profile)
 
 
 @router.get("/blink/images/{frame_id}.png", response_class=Response, responses={200: {"content": {"image/png": {}}}})
@@ -86,8 +96,9 @@ def blink_image(
     dec: Dec,
     services: Annotated[Services, Depends(get_services)],
     size: Size = None,
+    profile: LocalProfile = "default",
 ) -> Response:
-    png = services.blink.image(ra, dec, size, frame_id)
+    png = services.blink.image(ra, dec, size, frame_id, profile)
     return Response(content=png, media_type="image/png", headers={"Cache-Control": IMAGE_CACHE_CONTROL})
 
 
@@ -148,9 +159,13 @@ def _dynamic_response(result: DynamicResult, settings) -> DynamicBlinkResponse: 
 
 @router.get("/blink/modes")
 def blink_modes(services: Annotated[Services, Depends(get_services)]) -> dict:
-    """Which blink modes this server offers: archive-driven (dynamic) and/or the two fixed local files."""
-    local = [FsPath(p).expanduser().is_file() for p in services.settings.blink_fits_files]
-    return {"dynamic_enabled": bool(services.settings.blink_dynamic_enabled and services.dynamic is not None), "local_demo_available": bool(local) and all(local)}
+    """Which blink modes and named local FITS pairs this server offers."""
+    local_profiles = services.blink.available_profiles()
+    return {
+        "dynamic_enabled": bool(services.settings.blink_dynamic_enabled and services.dynamic is not None),
+        "local_demo_available": bool(local_profiles),
+        "local_profiles": local_profiles,
+    }
 
 
 @router.get("/blink/dynamic", response_model=DynamicBlinkResponse, response_model_exclude_none=True)

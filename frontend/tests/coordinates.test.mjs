@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   coordinateAtPixelOffset,
   calculateFieldOfView,
+  formatRightAscension,
   normalizeRightAscension,
   panCenterByDrag,
   parseCoordinateInput,
+  parseSexagesimalCoordinateInput,
   zoomScale,
 } from '../src/sky/coordinates.ts';
 
@@ -21,6 +23,47 @@ test('coordinate form rejects out-of-range RA and preserves signed declination',
   });
   assert.equal(parseCoordinateInput('360', '0').ok, false);
   assert.equal(parseCoordinateInput('12', '-91').ok, false);
+});
+
+test('coordinate form accepts decimal-hour RA and converts to degrees', () => {
+  assert.deepEqual(parseCoordinateInput('12.345', '-31.25', 'hours'), {
+    ok: true,
+    value: { ra: 185.175, dec: -31.25 },
+  });
+  assert.equal(parseCoordinateInput('24', '0', 'hours').ok, false);
+  assert.equal(parseCoordinateInput('-0.001', '0', 'hours').ok, false);
+});
+
+test('sexagesimal coordinate form converts HMS and signed DMS to decimal degrees', () => {
+  const positive = parseSexagesimalCoordinateInput({
+    raHours: '16', raMinutes: '32', raSeconds: '27.1',
+    decSign: '+', decDegrees: '66', decMinutes: '45', decSeconds: '18',
+  });
+  assert.equal(positive.ok, true);
+  assert.ok(positive.value && Math.abs(positive.value.ra - 248.1129166667) < 1e-9);
+  assert.equal(positive.value?.dec, 66.755);
+  assert.deepEqual(parseSexagesimalCoordinateInput({
+    raHours: '0', raMinutes: '0', raSeconds: '0',
+    decSign: '-', decDegrees: '0', decMinutes: '30', decSeconds: '0',
+  }).value, { ra: 0, dec: -0.5 });
+});
+
+test('sexagesimal coordinates validate components and pole boundaries', () => {
+  const input = {
+    raHours: '23', raMinutes: '59', raSeconds: '59.9',
+    decSign: '+', decDegrees: '90', decMinutes: '0', decSeconds: '0',
+  };
+  assert.equal(parseSexagesimalCoordinateInput(input).ok, true);
+  assert.equal(parseSexagesimalCoordinateInput({ ...input, raHours: '24' }).ok, false);
+  assert.equal(parseSexagesimalCoordinateInput({ ...input, raMinutes: '60' }).ok, false);
+  assert.equal(parseSexagesimalCoordinateInput({ ...input, decDegrees: '90', decSeconds: '1' }).ok, false);
+  assert.equal(parseSexagesimalCoordinateInput({ ...input, decSign: '?' }).ok, false);
+});
+
+test('right ascension formats in degrees or hours without displaying the upper wrap limit', () => {
+  assert.equal(formatRightAscension(187.5, 'hours'), '12.500');
+  assert.equal(formatRightAscension(359.9999, 'degrees'), '0.000');
+  assert.equal(formatRightAscension(359.9999, 'hours'), '0.000');
 });
 
 test('pixel center maps to requested center and east-left offset wraps RA', () => {

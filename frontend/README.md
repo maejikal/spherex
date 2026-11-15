@@ -103,12 +103,19 @@ instantaneous with no layout change. Controls: Play/Pause, 0.25 / 0.5 / 1 / 2 s 
 `errors.ts`) with tests in `tests/blink.test.mjs`. On a phone-sized screen only one sheet fits, so the Blink viewer takes it and Inspect is one tap away.
 The prototype covers only the sky around RA 210.54, Dec +54.46; elsewhere the viewer says so and offers a "Go to covered region" button.
 
-### Archive mode and local demo
+The display initially fits the tight union of both PNG alpha bounds on one shared rectangular viewport, with no artificial padding. The stage preserves that rectangle’s aspect ratio so sky imagery is never stretched; rectangular fields show both angular dimensions.
+This removes transparent padding without independently centering epochs or altering their celestial alignment. **Full field** restores the
+original extent; visible FOV updates with fit/zoom, while metadata retains full-field FOV and coverage. Blank areas mean no usable data,
+not dark sky. Pixel-read failures fall back to full field. Display geometry lives in `src/sky/blink/viewport.ts`, tested in
+`tests/blinkViewport.test.mjs`; FITS extraction and backend responses are unchanged. Observation details and original warnings remain expandable.
+On narrow screens, Blink uses the available workspace rather than a half-height sheet; closing it restores the sky view.
+
+### Archive mode and local SPHEREx
 
 The Blink Viewer has an observation-source switch. **SPHEREx archive** (the default) calls `/api/blink/dynamic` for the analysed position and shows a
 wavelength-matched pair from NASA/IPAC, with detector, observation ids, central wavelength and bandwidth, the wavelength gap, coverage, provenance and
-warnings. **Local demo** uses the two fixed D5 files (limited sky region). The mode only changes when the user switches it (or the server reports archive mode
-off); a failed archive request is explained in the viewer, with a Retry where it can help and an explicit "Use local demo instead" button, and **never**
+warnings. **Local SPHEREx** uses locally stored SPHEREx FITS observation pairs, including configured target pairs such as Barnard’s Star. The original two-file D5 pair is labeled **Local demo (real SPHEREx)**; it was supplied locally, not queried from NASA by the app. Barnard’s Star is a separate cached NASA/IPAC observation pair, not a demo. Both contain real SPHEREx observations; coverage is limited to the configured files. The mode only changes when the user switches it (or the server reports archive mode
+off); a failed archive request is explained in the viewer, with a Retry where it can help and an explicit "Use local SPHEREx instead" button, and **never**
 falls back to local data silently. Pure logic: `src/sky/blink/mode.ts`, `response.ts`, `errors.ts`; tests in `tests/blink.test.mjs`.
 
 ## Known limitations
@@ -120,14 +127,14 @@ falls back to local data silently. Pure logic: `src/sky/blink/mode.ts`, `respons
 
 ## Selected constellation
 
-App owns one React Query lookup keyed by selected RA/Dec and an independent session-only boundary preference. It passes the result to
-`ConstellationCard` in both the selected-position tray and Inspect, without enabling SIMBAD analysis. The API client validates ICRS
+App owns one React Query lookup keyed by selected RA/Dec, plus an independent session-only boundary preference enabled by default.
+It passes the lookup to `ConstellationCard` in both the selected-position tray and Inspect, without enabling SIMBAD analysis. The API client validates ICRS
 rings and link origins. `AladinController.setConstellationBoundary` owns one reusable graphics layer; new selection, failure, clearing,
 or disabling the toggle removes old geometry. Aladin projects the sampled coordinates; no DOM pixel tracing or separate renderer.
 Wikipedia links are external and explicitly labelled. Name, loading, failure/retry and checkbox remain keyboard-accessible.
 
-Manual check: select Orion, enable the outline, zoom out; verify a gold region boundary (not star connections). Select Andromeda and
-confirm no Orion outline remains, then clear selection. Inspect and tray checkboxes stay in sync. Change spectral channel and layout;
+Manual check: select Orion; outline should appear by default. Toggle off and back on, then zoom out; verify gold region boundary
+(not star connections). Select Andromeda and confirm no Orion outline remains, then clear selection. Inspect and tray checkboxes stay in sync. Change spectral channel and layout;
 selection/outline persist. With backend stopped, a new selection shows retry instead of the previous name or boundary. Test at 390px.
 
 ### Constellation overview window
@@ -140,3 +147,22 @@ clearing selection, or a pending/failed new lookup hides the window instead of r
 the mean boundary unit vector, then uniformly fits them into an SVG viewBox. RA wrap, polar regions and disconnected Serpens rings are
 handled without planar RA/Dec bounding boxes. North up/east left describes orientation at chart center; projection distorts shapes away
 from center. This is a context map, not WCS or a measured field of view. No invented stars, figure connections or new dependencies.
+
+Local SPHEREx automatically loads a usable configured observation pair for the analysed coordinates; no pair picker is needed. Selection uses backend WCS/valid-pixel coverage, not object-name matching. Targets without usable local coverage show a no-coverage message.
+
+## Community review prototype
+
+Load a blink pair, then choose **Flag for review**. The dialog pauses blinking and shows the full original images, independent of blink zoom/cropping. Click/tap or click and drag each image to position a fine crosshair. Each image supports independent 1×–8× zoom centered on its mark; scroll the zoomed image to inspect detail. Focus an image and press Enter to place a crosshair; arrow keys move 0.1 original pixel (Shift: 1 pixel; Alt: 0.01 pixel), Delete clears. Fractional coordinates are annotation positions, not extra image resolution or astrometric precision. Image URLs remain in stored provenance but are not displayed in review metadata. Existing integer-pixel marks remain compatible. Mark one anomaly per case, independently in each frame, or explicitly choose **Not visible**. A title, description, and at least one crosshair are required.
+
+**Community review** opens a queue saved **only in this browser/origin**. IndexedDB database `spherex-community-review` stores immutable analysis metadata and original image blobs atomically, separately from votes. The `review=<case-id>` URL reopens a case on that browser; it does **not** share evidence with other people/devices. Browser privacy restrictions, quota limits, clearing site data, or changing origin can make cases unavailable. Publishing errors retain the draft; drafts are not persistent across reloads. Source URLs remain in metadata, but reviewing saved evidence does not depend on upstream image caches.
+
+Use **Demo account** in the explorer header or review dialog to switch between six fictional profiles: Alex, Maya, Sam, Jordan, Riley and Casey. No login, password, or account creation is required. Selection persists in localStorage on this browser (falls back to memory if storage is blocked); profiles share the same browser-local review queue. Any selected account can author an observation or review another account’s case. Drafts capture the author when opened. Existing author/reviewer IDs remain compatible; old cases now display their corresponding profile names. Self-review is blocked; one editable decision per other demo account. All decisions count toward five required reviews; only **Warrants further investigation** counts toward the exact 80% threshold. The author closes voting when eligible. This is not identity verification, abuse protection, or scientific confirmation. Other tabs must reload a case to see changes; revision checking prevents stale overwrites.
+
+After closure, author-only **Simulate MPC submission**, **Simulate MPC acceptance**, and **Simulate observatory referral** record local application timestamps in order. Nothing is sent externally, and no real MPC/observatory integration or validation is claimed. Real submission eligibility (including whether a candidate belongs with MPC at all) needs a separate scientific and service-integration design.
+
+Architecture: `src/review/model.ts` owns validation/workflow and original-image pixel mapping; `storage.ts` owns native IndexedDB and validated image snapshots; `route.ts` preserves explorer URL parameters. `src/components/review/` owns accessible native dialogs, annotations, queue and case screens. No backend/API changes or added dependencies. A future shared implementation must replace the storage boundary with authenticated backend persistence, durable evidence storage, server-enforced review permissions/thresholds, moderation and audited external integrations. Never treat demo identities as production authentication.
+
+Verification: `npm test`, `npm run typecheck`, `npm run build`. No lint script is configured. Manual checks: create case; independently mark both images or mark one Not visible; test keyboard/Cancel/Escape; switch through five reviewers (four positive, one uncertain); switch to author, close and advance all simulated stages; reload to confirm evidence and votes remain; check narrow-screen stacking and missing local case URLs. Do not interpret test descriptions or demo votes as scientific observations.
+
+
+Each community review entry and case detail offers **Open in blink viewer**. It opens a focused popup above the current review with that case’s original IndexedDB image evidence. The case or queue remains mounted underneath, preserving scroll and unsaved review input. The sky view and URL do not change. No archive pair is rediscovered. Playback, frame stepping, zoom, coverage and observation details remain available; **Back to review**, the popup close button, or Escape closes only the popup and restores focus to its opener. Missing evidence reports an error with retry/return controls rather than substituting other images. Closing the popup stops playback and releases its temporary image URLs. Saved evidence cannot be reflagged from this player; annotate a fresh analysis for a new case.

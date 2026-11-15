@@ -231,6 +231,9 @@ export function AladinSkyViewer({
         role="region"
         aria-label="Sky image. Drag to pan, scroll to zoom, use arrow keys to navigate, single-click to select, or double-click to center."
         tabIndex={interactive ? 0 : -1}
+        onPointerDownCapture={(event) => {
+          if (interactive && event.button === 0) event.currentTarget.focus({ preventScroll: true });
+        }}
         onKeyDown={(event) => {
           if (!interactive) return;
           const map = { ArrowUp: 'north', ArrowDown: 'south', ArrowLeft: 'west', ArrowRight: 'east' } as const;
