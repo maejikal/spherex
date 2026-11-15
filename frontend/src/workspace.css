@@ -82,7 +82,11 @@
     grid-column: 1; grid-row: 1 / -1; width: auto; height: auto; align-self: stretch; justify-self: stretch;
     margin: var(--card-gap); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 6px 20px #0006;
   }
-  .workspace--docked[data-left-stacked="true"] { grid-template-rows: minmax(0, fit-content(55%)) minmax(0, 1fr); }
+  /* Find's search and Go-to-coordinates controls need about 300px with the header; its destination list
+     scrolls. Capping it at 42 % (never under 300px) leaves View the rest, enough for its wavelength and
+     zoom controls on a 900px-tall window. fit-content() is a track size of its own: nesting it in minmax()
+     is invalid and made the browser drop the whole rule, which left two equal rows. */
+  .workspace--docked[data-left-stacked="true"] { grid-template-rows: fit-content(max(300px, 42%)) minmax(0, 1fr); }
   .workspace--docked[data-left-stacked="true"] > .tool-window--find { grid-row: 1; margin-bottom: calc(var(--card-gap) / 2); }
   .workspace--docked[data-left-stacked="true"] > .tool-window--view { grid-row: 2; margin-top: calc(var(--card-gap) / 2); }
   .workspace--docked > .tool-window--inspect { grid-column: 3; grid-row: 1 / -1; border-left: 1px solid var(--border-subtle); }
