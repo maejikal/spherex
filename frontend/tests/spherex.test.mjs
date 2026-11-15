@@ -104,3 +104,22 @@ test('scale <-> FOV: viewport width x arcsec-per-pixel / 3600', () => {
   assert.equal(clampScale(0.01), 0.2);
   assert.equal(clampScale(9999), 500);
 });
+
+test('BUG-010: a URL channel outside the cube resolves to the default frame everywhere', async () => {
+  const { resolveFrame, validChannelOrNull } = await import('../src/sky/spherex/channels.ts');
+  const s = info();
+  // Valid frames (including frame 0 and the last frame) are kept.
+  assert.equal(resolveFrame(s, 0), 0);
+  assert.equal(resolveFrame(s, 60), 60);
+  assert.equal(resolveFrame(s, 101), 101);
+  assert.equal(validChannelOrNull(s, 60), 60);
+  // Missing channel means the service default.
+  assert.equal(resolveFrame(s, null), defaultFrame(s));
+  assert.equal(validChannelOrNull(s, null), null);
+  // Out of range: dropped, so selector, readouts and imagery all use the default frame.
+  for (const bad of [102, 999, -1, 1.5, Number.NaN]) {
+    assert.equal(resolveFrame(s, bad), defaultFrame(s), `frame ${bad}`);
+    assert.equal(validChannelOrNull(s, bad), null, `frame ${bad}`);
+    assert.equal(channelForFrame(s, resolveFrame(s, bad))?.frame, defaultFrame(s));
+  }
+});

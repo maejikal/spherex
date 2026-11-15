@@ -52,6 +52,20 @@ export function defaultFrame(info: SphereXSurveyInfo): number {
 }
 
 /**
+ * The frame actually displayed for a requested `channel` (URL or state). A URL is parsed before the cube
+ * depth is known, so a frame outside the verified cube (e.g. `channel=999`) is only rejected here; it
+ * falls back to the service default so the selector, readouts and imagery always show the same frame.
+ */
+export function resolveFrame(info: SphereXSurveyInfo, channel: number | null): number {
+  return channel !== null && channelForFrame(info, channel) ? channel : defaultFrame(info);
+}
+
+/** `channel` when it names a frame of this cube, otherwise null (meaning: the service default). */
+export function validChannelOrNull(info: SphereXSurveyInfo, channel: number | null): number | null {
+  return channel !== null && channelForFrame(info, channel) ? channel : null;
+}
+
+/**
  * Frequency (Hz) to hand to Aladin Lite's `HiPS.setFrequency()` so that it displays `frame`.
  * Aladin maps frequency linearly onto frames between c/em_max and c/em_min; IRSA's own landing page
  * passes the middle of each frame's interval. The resulting tile requests are asserted in the

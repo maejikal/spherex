@@ -68,6 +68,79 @@ export function initialPosition({ placement, workspace, panel, anchor, gap = 16 
   return { x: gap, y: gap };
 }
 
+/** Height of a window's title bar (with its close button) that a newly placed window should never cover. */
+export const HEADER_HEIGHT = 56;
+
+function overlapArea(a: Box, b: Box): number {
+  const x = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const y = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return x > 0 && y > 0 ? x * y : 0;
+}
+
+/** Keep a window of `size` inside `area` with an 8 px margin (top-left wins when it cannot fit). */
+export function clampToArea(position: { x: number; y: number }, area: Box, size: { width: number; height: number }, gap = 8): { x: number; y: number } {
+  const minX = area.x + gap;
+  const minY = area.y + gap;
+  const maxX = Math.max(minX, area.x + area.width - size.width - gap);
+  const maxY = Math.max(minY, area.y + area.height - size.height - gap);
+  return { x: Math.min(maxX, Math.max(minX, position.x)), y: Math.min(maxY, Math.max(minY, position.y)) };
+}
+
+/**
+ * First position for a window that opens over others. Starts from `preferred` and, if that covers other
+ * open windows, tries positions beside, above and below each of them inside `area`. Covering another
+ * window's title bar (and so its close button) costs far more than covering its body, so when something
+ * has to overlap it is content, never a header. When the workspace is too small for that at full height
+ * (tablet widths in the floating layout), the window may open just below the other title bars with a
+ * shorter `height` (its body scrolls), never below `minHeight`. Ties keep the earlier candidate, so
+ * `preferred` wins whenever it is clear.
+ */
+export function placeAvoiding({ preferred, area, panel, obstacles, gap = 16, minHeight = 240 }: {
+  preferred: { x: number; y: number };
+  area: Box;
+  panel: { width: number; height: number };
+  obstacles: readonly Box[];
+  gap?: number;
+  minHeight?: number;
+}): { x: number; y: number; height?: number } {
+  const candidates: { x: number; y: number; height?: number }[] = [preferred];
+  for (const o of obstacles) {
+    candidates.push(
+      { x: o.x + o.width + gap, y: preferred.y },
+      { x: o.x - gap - panel.width, y: preferred.y },
+      { x: preferred.x, y: o.y + o.height + gap },
+      { x: o.x + o.width + gap, y: o.y + HEADER_HEIGHT + gap },
+      { x: o.x - gap - panel.width, y: o.y + HEADER_HEIGHT + gap },
+    );
+  }
+  // Shortened fallbacks: open below every title bar it would otherwise cover.
+  for (const o of obstacles) {
+    const y = o.y + HEADER_HEIGHT + gap;
+    const height = Math.min(panel.height, Math.floor(area.y + area.height - 8 - y));
+    if (height >= minHeight && height < panel.height) {
+      for (const x of [preferred.x, o.x + o.width + gap, o.x - gap - panel.width]) candidates.push({ x, y, height });
+    }
+  }
+  let best: { x: number; y: number; height?: number } = clampToArea(preferred, area, panel);
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const size = { width: panel.width, height: candidate.height ?? panel.height };
+    const position = clampToArea(candidate, area, size);
+    const box = { ...position, ...size };
+    let score = 0;
+    for (const o of obstacles) {
+      score += overlapArea(box, o) + 1000 * overlapArea(box, { x: o.x, y: o.y, width: o.width, height: Math.min(HEADER_HEIGHT, o.height) });
+    }
+    // A shorter window is a little worse than a full one with the same overlap.
+    if (candidate.height !== undefined) score += 1;
+    if (score < bestScore) {
+      best = candidate.height !== undefined ? { ...position, height: candidate.height } : position;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 /**
  * What "Analyze area" opens. Inspect (the SIMBAD search) always opens, exactly as before; the blink viewer
  * opens with it and is raised last, so it is the front window while Inspect stays open beside it. On a
