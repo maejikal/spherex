@@ -36,16 +36,10 @@ log = logging.getLogger("skyexplorer.fits")
 
 SUPPORTED_UNITS = frozenset({"MJy / sr", "MJy/sr"})
 
-# Quality-flag policy. The FLAGS header of the real files names every bit plane (MSKN####), so the
-# policy is expressed by *name* and resolved against each file. Only planes whose header description
-# says the pixel value is lost or unreliable are masked. Notably NOT masked:
-#   SOURCE   - "mapped to a known source": ~31 % of pixels, i.e. the stars we want to see;
-#   TRANSIENT, HALO, OUTLIER, COLD, PERSIST, CROSSTALK, GHOST*, DICHROIC, FULLSAMPLE, PHANMISS -
-#              informational or soft; masking them would remove most of the frame and hide real objects.
-# If a file has no FLAGS HDU, or none of these names, only non-finite pixels are masked.
-BAD_FLAG_NAMES = frozenset({
-    "OVERFLOW", "SUR_ERROR", "NONFUNC", "MISSING_DATA", "HOT", "NONLINEAR", "STREAK", "BLOOM", "SNOWBALL",
-})
+# Display policy: only NONFUNC and MISSING_DATA flags make pixels transparent.
+# Resolve names through each file's MSKN#### cards; all other flags remain visible.
+# Missing FLAGS metadata still leaves non-finite science pixels masked.
+BAD_FLAG_NAMES = frozenset({"NONFUNC", "MISSING_DATA"})
 
 _DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
 _SAMPLE_STRIDE = 32

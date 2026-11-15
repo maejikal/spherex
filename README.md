@@ -6,9 +6,18 @@ The interaction model is inspired by SDSS Navigate; SDSS data is not used.
 
 - **Imagery:** the NASA/IPAC IRSA [SPHEREx DR1 all-sky data cube HiPS](https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube),
   rendered in the browser by [Aladin Lite](https://aladin.cds.unistra.fr/AladinLite/) 3.8.2. Tiles are fetched directly from IRSA (CORS is open), so no
-  backend image proxy exists.
+  backend proxy is used for the main sky. The separate blink viewer serves backend-generated PNGs from real FITS observations.
 - **Constellations:** selected-position IAU membership via local Astropy, Wikipedia links, and optional official boundary outlines.
-- **Backend (FastAPI):** survey metadata, CDS Sesame name resolution, SIMBAD nearby-object lookup, and coverage-verified SPHEREx targets.
+- **Backend (FastAPI):** survey metadata, CDS Sesame name resolution, SIMBAD nearby-object lookup, tile-verified targets, and aligned FITS blink cutouts.
+- **Blink viewer:** archive-discovered, wavelength-matched observation pairs, plus an explicitly selected local two-exposure demo.
+- **Workspace:** floating or docked Find / View / Inspect windows; compact screens use bottom sheets.
+
+Current scope and scientific constraints: [project.md](project.md).
+
+Archive blink can recover previously cached views during IRSA discovery outages, including after backend restart.
+It revalidates local FITS and shows a cache timestamp/outage warning. Requires a successful discovery snapshot
+saved by this version; older FITS-only caches need one successful search first.
+See [cached-view recovery and limits](backend/README.md#cached-views-during-irsa-outages).
 
 > Does the SPHEREx HiPS provide direct access to all 102 spectral channels? **Yes.** It is a HiPS *cube* (`dataproduct_type = cube`,
 > `hips_cube_depth = 102`) with one tile file per frame. 100 channels have imagery; frames 50 and 51 (the dichroic boundary channels,
@@ -16,16 +25,60 @@ The interaction model is inspired by SDSS Navigate; SDSS data is not used.
 
 ## Run
 
-```zsh
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r backend/requirements.txt
-npm --prefix frontend install
+Requires Python 3.11+, Node.js 22.6+ with npm (tests use `--experimental-strip-types`), and a WebGL-capable browser. Public archive/catalogue access needs internet; no API key is configured.
 
-cd backend && ../.venv/bin/uvicorn app.main:app --reload     # http://127.0.0.1:8000  (docs: /docs)
-cd frontend && npm run dev                                   # http://localhost:5173  (proxies /api -> :8000)
+From the repository root:
+
+```zsh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r backend/requirements.txt
+npm --prefix frontend install
+# Optional: copy only if backend/.env does not already exist
+cp -n backend/.env.example backend/.env
 ```
 
-Needs a browser with WebGL. Tests: `cd backend && ../.venv/bin/python -m pytest` and `cd frontend && npm run typecheck && npm test && npm run build`.
+Start each server in a separate terminal, initially at the repository root:
+
+```zsh
+# Terminal 1
+cd backend
+../.venv/bin/uvicorn app.main:app --reload
+```
+
+```zsh
+# Terminal 2
+cd frontend
+npm run dev
+```
+
+Open http://localhost:5173. Vite proxies `/api` to http://127.0.0.1:8000; API documentation is at `/docs` and `/openapi.json` on the backend.
+
+### Configuration
+
+Backend settings use `SKY_*` environment variables or `backend/.env` when started as above. List values use JSON. Full defaults: [config.py](backend/app/config.py); examples: [backend/.env.example](backend/.env.example).
+
+- `SKY_CORS_ORIGINS`: allowed frontend origins; defaults to localhost and 127.0.0.1 on port 5173.
+- `SKY_BLINK_DYNAMIC_ENABLED`: archive analysis enabled by default.
+- `SKY_BLINK_CACHE_DIR`, `SKY_BLINK_CACHE_MAX_BYTES`: writable FITS/calibration disk cache; defaults to `backend/.cache/blink` and 1 GiB.
+- `SKY_BLINK_FITS_FILES`: local-demo file paths; defaults to `~/Downloads/spherex_D5_2025_05_full.fits` and `~/Downloads/spherex_D5_2025_12_full.fits`. Files are not bundled. Missing files do not prevent sky browsing or archive mode.
+- `SKY_BLINK_CALIBRATION_SEED_FILES`: optional local full-frame calibration seeds; otherwise archive mode bootstraps calibration from IRSA.
+- `SKY_DYNAMIC_FOV_DEFAULT/MIN/MAX`: archive cutout field in degrees; defaults to 0.1 / 0.02 / 0.5. Pair-selection and quality thresholds are provisional engineering settings, not validated scientific criteria.
+- Frontend `VITE_API_BASE_URL`: API origin override (default same-origin `/api` requests). `VITE_SPHEREX_HIPS_URL`: HiPS source override; pair with `SKY_SPHEREX_HIPS_URL` for consistent frontend/backend metadata. Overrides must still supply the expected SPHEREx cube.
+
+For deployment, serve `frontend/dist` after building and route `/api` to FastAPI, or configure the frontend API origin and backend CORS. Vite's development proxy is not included in the production build.
+
+### Checks
+
+```zsh
+(cd backend && ../.venv/bin/python -m pytest)
+npm --prefix frontend run typecheck
+npm --prefix frontend test
+npm --prefix frontend run build
+git diff --check
+```
+
+No lint script is currently defined. Automated tests mock external services; they do not establish live archive availability. To check a running installation, request `/api/health/dependencies`, load a sky channel, resolve an object, and run **Analyze area**. The dependency probe does not test the FITS pipeline. This documentation refresh describes the working tree; it does not claim a new live-service verification.
 
 ## Architecture
 
@@ -34,10 +87,12 @@ Needs a browser with WebGL. Tests: `cd backend && ../.venv/bin/python -m pytest`
 | Sky rendering, pan/zoom, grid, picking | Aladin Lite inside `frontend/src/components/AladinSkyViewer.tsx`, controlled by `frontend/src/sky/aladin/controller.ts` |
 | SPHEREx metadata + channel table | `frontend/src/sky/spherex/` (reads the HiPS `properties` document directly) |
 | App state / URL / history | Zustand store + `frontend/src/state/` |
-| Name resolution, nearby objects, targets, survey info | FastAPI in `backend/app/` |
+| Name resolution, nearby objects, targets, survey info | FastAPI routes, providers and services in `backend/app/` |
+| Archive discovery, pair ranking and verification | `irsa_archive.py`, `pair_selection.py`, `spherex_calibration.py`, `dynamic_blink.py` in `backend/app/services/` |
+| FITS WCS alignment and display | `fits_cutout.py`, `fits_display.py`, `blink_service.py`; PNG playback in `frontend/src/sky/blink/` |
 
-Keep UI, viewer state, provider integrations and backend logic in separate modules. A future SPHEREx FITS/IRSA-observation provider plugs into
-`backend/app/providers/base.py` (`SurveyProvider`) without touching routes.
+Keep UI, viewer state, provider integrations and backend logic in separate modules. The main sky uses direct HiPS rendering; timestamped FITS analysis uses separate backend services and blink routes.
+`SurveyProvider` in `backend/app/providers/base.py` describes surveys; it is not the FITS processing pipeline.
 
 ## API
 
@@ -52,7 +107,12 @@ Keep UI, viewer state, provider integrations and backend logic in separate modul
 | `GET /api/targets/suggested` | Curated, tile-verified SPHEREx targets |
 | `GET /api/targets/random` | Random tile-verified sky position (uniform on the sphere) |
 | `GET /api/blink/cutouts?ra=&dec=` | Aligned May/December SPHEREx cutouts from two local FITS files, for the blink viewer (`SKY_BLINK_FITS_FILES`) |
-| `GET /api/blink/images/{frame}.png` | PNG for one blink frame (URLs come from the endpoint above) |
+| `GET /api/blink/images/{frame_id}.png?ra=&dec=&size=` | Local-demo PNG; use returned image URLs |
+| `GET /api/blink/modes` | Archive enabled / local files available |
+| `GET /api/blink/dynamic?ra=&dec=&fov_deg=0.1` | Discover, verify and align a two-epoch archive pair |
+| `GET /api/blink/dynamic/images/{frame_id}.png?ra=&dec=&fov_deg=` | Archive PNG; use returned image URLs |
+
+Coordinates are ICRS decimal degrees (`0 <= RA < 360`, `-90 <= Dec <= 90`). Nearby lookup uses `radius_arcsec` and `limit`. Errors use `{"error":{"code":"…","message":"…"}}`; see OpenAPI for validation and schemas. The old SDSS `/api/images/cutout` endpoint is removed.
 
 ## Data sources and provenance
 
@@ -82,9 +142,26 @@ No runtime external call or API key is needed for constellation lookup. Transfor
 and React Query caches exact selected-position requests, cancels obsolete fetches, and clears old geometry on selection changes. Wikipedia
 opens only when requested; article titles are explicitly mapped to avoid ambiguous names. No new environment variables.
 
+## Blink analysis
+
+Select a position, then choose **Analyze area** to open SIMBAD inspection and the Blink viewer. Analysis captures that position; later panning or selection does not replace it. Archive mode is the default. Local demo is explicitly selectable; an archive failure never silently substitutes local images.
+
+Archive mode searches IRSA SIA2 for SPHEREx DR1 observations, groups actual timestamps into epochs, ranks same-detector wavelength-compatible pairs, downloads FITS cutouts, and verifies wavelength, calibration, position and coverage before accepting a pair. It can reject a field even when HiPS imagery exists. The response carries observation identifiers, dates, wavelengths, coverage, WCS, provenance and warnings.
+
+Both modes resample exposures onto a common TAN grid using Astropy's SIP-aware WCS and mask-aware bilinear interpolation. Local frames are north-up/east-left; archive frames can use a reported rotation. NONFUNC and MISSING_DATA flags are masked; other flags, including SOURCE, remain visible. Archive mode also excludes invalid science/variance and reports caution flags. A per-frame additive background removal and common asinh stretch affect display only. This is **not flux-conserving reprojection or photometric calibration**.
+
+Playback waits for both PNGs to decode. Controls include play/pause, frame stepping, speed, and 1x/2x/4x display zoom. Local demo coverage depends on the configured files, not the all-sky cube. Missing data, rejected pairs and upstream failures remain distinct. Full processing details: [backend/README.md](backend/README.md#dynamic-blink-nasaipac-archive).
+
+## View state
+
+Shared URLs include `ra`, `dec`, `scale`, `survey=spherex`, zero-based `channel`, and `grid`, for example `?ra=180&dec=-58&scale=2.5&survey=spherex&channel=30&grid=1`. Scale is arcseconds per CSS pixel; smaller means greater zoom. Aladin handles spherical projection and picking. Settled pan/zoom replaces history; explicit navigation pushes history. Panel layout and blink analysis are not encoded in the shared view.
+
 ## Limitations
 
-- Wavelength channels are not observation times; there is no time slider or blinking. Time-domain features need timestamped observations from IRSA.
+- Wavelength channels are not observation times. The combined HiPS cube cannot show motion; blinking uses separate timestamped FITS exposures, not channel switching.
+- Archive pairing is a prototype: matching wavelength and WCS does not establish astrophysical variability. Detector artifacts, residual wavelength differences, interpolation and background subtraction can affect apparent changes.
+- Automated discovery, calibrated difference imaging, stacking, light curves and quantitative spectral extraction are not implemented.
+- Archive requests can be slow or fail; successful all-sky browsing does not guarantee an acceptable two-epoch pair. Caches are local, and in-memory state is per process.
 - The HiPS pixel scale (order 5, ~12.9"/px) is coarser than SPHEREx's native 6.2"/px; zooming beyond it magnifies pixels. The imagery is for exploration, not photometry.
 - High-proper-motion targets (Barnard's Star, ε Indi B, WISE 0855) are placed at their position at the cube's mid-epoch (propagated with SIMBAD proper motion), stated in each description.
 - WebGL is required; behaviour and performance depend on the browser GPU.

@@ -115,9 +115,9 @@ The files are large (about 65 MB) and git-ignored (`*.fits`); keep them outside 
    reading only the needed sub-image through memory mapping. The May and December images are rotated about 180 degrees relative to each
    other, so this step (not raw pixel blinking) is what makes stars coincide. Bilinear sampling is **not flux-conserving** reprojection:
    it slightly smooths data and correlates noise. Invalid pixels never leak into neighbours (normalised weights).
-4. **Masking**: non-finite pixels, pixels outside an exposure's footprint, and pixels whose `FLAGS` plane is named OVERFLOW, SUR_ERROR,
-   NONFUNC, MISSING_DATA, HOT, NONLINEAR, STREAK, BLOOM or SNOWBALL (resolved from the file's own `MSKN####` header cards). `SOURCE`
-   (about 31 % of pixels, the stars themselves) and the soft/informational planes (TRANSIENT, HALO, OUTLIER, COLD, PERSIST, ...) are **not** masked.
+4. **Masking**: non-finite pixels, pixels outside an exposure's footprint, and pixels whose `FLAGS` plane is named
+   NONFUNC or MISSING_DATA (resolved from the file's own `MSKN####` header cards).
+   All other flags remain visible, including SOURCE and unknown flag names.
    Masked pixels are transparent in the PNG, never black sky.
 5. **Display**: a per-frame median **additive** background is removed (the two files differ by about 0.05 MJy/sr), then one **common**
    percentile clip (1-99.7 %) and asinh stretch is applied to both frames. There is no multiplicative rescaling, so real brightness changes
@@ -161,9 +161,35 @@ selects pairs by wavelength and re-checks the exact wavelength from the download
    `SKY_MAX_FOOTPRINT_ERROR_PX` (400) the observation is rejected as `footprint_mismatch`. Then: exact wavelength/bandwidth gap, geometric coverage, common good-quality coverage. A failing pair falls through to the next one (an observation that failed is
    remembered and never fetched again; when the failures are geometry/metadata problems the shortlist is extended up to `SKY_MAX_PAIRS_TO_TRY`); if none passes, the error reason says why. Nothing is ever substituted from another source.
 6. **Reprojection** reuses the tested mask-aware bilinear resampler (SIP-aware `all_world2pix`) onto one shared TAN grid (odd size, target on the centre pixel, optional rotation).
-   Hard-invalid pixels (OVERFLOW, SUR_ERROR, NONFUNC, MISSING_DATA, HOT, COLD, NONLINEAR, STREAK, BLOOM, SNOWBALL, non-finite or non-positive variance) are excluded; caution flags
-   (TRANSIENT, PERSIST, OUTLIER, HALO) are kept and reported; **SOURCE and FULLSAMPLE are never masked**. Flag bitmasks are sampled nearest-neighbour, never interpolated.
+   Only NONFUNC and MISSING_DATA flags are excluded; all other flags remain visible.
+   Non-finite science/variance and non-positive variance are still excluded. Caution flags
+   (OVERFLOW, TRANSIENT, PERSIST, OUTLIER, HALO) are kept and reported; **SOURCE and FULLSAMPLE are never masked**. Flag bitmasks are sampled nearest-neighbour, never interpolated.
    Display scaling is the same additive-background + shared asinh stretch as the local mode; calibrated values are not modified.
+
+### Cached views during IRSA outages
+
+Successful SIA discovery responses are atomically persisted in `SKY_BLINK_CACHE_DIR/discovery`.
+Snapshots are isolated by endpoint, collection, query position (six decimal places), radius, and format version.
+The directory keeps at most `SKY_SIA_CACHE_ENTRIES` snapshots (default 64), each capped at 25 MiB;
+this metadata allowance is separate from the FITS byte limit. Writes are best-effort: disk errors do not break live searches.
+
+Normal discovery still uses its in-memory TTL cache, then IRSA with bounded retries. If discovery exhausts
+retries with an availability error or timeout, the viewer reads the matching disk snapshot and uses only
+validated local cutouts for that exact position, field size, release, and processing options. Missing or
+corrupt files are excluded; recovery never downloads data or substitutes another field/collection.
+Calibration can be recovered from the cached science FITS. Pair selection, wavelength/coverage/quality
+checks, reprojection, current flag policy, and PNG rendering all run again. Existing UI warnings show
+“Cached data; archive unavailable,” the metadata save time in UTC, and the possibility of missing newer observations.
+This timestamp is a cache timestamp, **not** an observation time. Normal result-cache TTL still applies.
+
+Stale snapshots have no age cutoff, but are used only during outages and are always labeled. Invalid live
+responses are not hidden by fallback. If no snapshot or verified local pair exists, the original upstream
+error remains an error. Once live discovery is attempted successfully again, its metadata replaces the snapshot.
+
+**Migration limitation:** FITS files downloaded before discovery persistence was added have no discovery
+snapshot. One successful search for that position is needed to seed metadata before outage recovery works.
+No historical observation metadata is invented from cache filenames. New fields, different sizes/options,
+and evicted data still require IRSA access. TAP discovery fallback is not implemented.
 
 Settings (all `SKY_`-prefixed; pair-selection values are provisional engineering heuristics, not scientific thresholds): `BLINK_DYNAMIC_ENABLED`, `IRSA_SIA_URL`,
 `IRSA_COLLECTION`, `IRSA_MAX_RETRIES`, `IRSA_BACKOFF_BASE`, `BLINK_CACHE_DIR` (default `backend/.cache/blink`, git-ignored), `BLINK_CACHE_MAX_BYTES` (1 GiB, LRU),

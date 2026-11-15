@@ -140,8 +140,8 @@ def _dynamic_response(result: DynamicResult, settings) -> DynamicBlinkResponse: 
             source="NASA/IPAC Infrared Science Archive (IRSA)", collection=result.collection, release=result.release,
             archive_search="SIA2 position search, then IBE FITS cutouts",
             interpolation="Bilinear, mask-aware; flag bitmasks are sampled nearest-neighbour and never interpolated",
-            flag_policy="Hard-invalid: OVERFLOW, SUR_ERROR, NONFUNC, MISSING_DATA, HOT, COLD, NONLINEAR, STREAK, BLOOM, SNOWBALL, plus non-finite or non-positive variance. "
-                        "Caution (kept, reported): TRANSIENT, PERSIST, OUTLIER, HALO. Informational (kept): SOURCE, FULLSAMPLE.",
+            flag_policy="Transparent flags: NONFUNC, MISSING_DATA. All other flags (including SOURCE) remain visible. Non-finite science/variance or non-positive variance are also excluded. "
+                        "Caution (kept, reported): OVERFLOW, TRANSIENT, PERSIST, OUTLIER, HALO. Informational (kept): SOURCE, FULLSAMPLE.",
         ),
     )
 

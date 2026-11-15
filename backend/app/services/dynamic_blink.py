@@ -42,8 +42,8 @@ from .spherex_calibration import CalibrationError, CalibrationRegistry, Detector
 log = logging.getLogger("skyexplorer.dynamic")
 
 # Quality-flag policy (names are resolved to bits through each file's own MSKN#### header cards).
-HARD_INVALID_NAMES = frozenset(BAD_FLAG_NAMES | {"COLD"})
-SUSPECT_NAMES = frozenset({"TRANSIENT", "PERSIST", "OUTLIER", "HALO", "DICHROIC", "PHANMISS", "CROSSTALK", "GHOST", "GHOST_FPA", "GHOST_EXT"})
+HARD_INVALID_NAMES = BAD_FLAG_NAMES
+SUSPECT_NAMES = frozenset({"OVERFLOW", "TRANSIENT", "PERSIST", "OUTLIER", "HALO", "DICHROIC", "PHANMISS", "CROSSTALK", "GHOST", "GHOST_FPA", "GHOST_EXT"})
 INFORMATIONAL_NAMES = frozenset({"SOURCE", "FULLSAMPLE"})  # never masked
 CALIBRATION_BOOTSTRAP_FOV = 0.01
 # Reasons that point at geometry/metadata (not at the sky or the data): worth trying more candidates for.
@@ -276,11 +276,11 @@ class DynamicResult:
 
 
 class HeaderSource(Protocol):
-    def get(self, obs: SiaObservation) -> fits.Header: ...
+    def get(self, obs: SiaObservation, *, cached_only: bool = False) -> fits.Header: ...
 
 
 class CutoutSource(Protocol):
-    def get(self, obs: SiaObservation, ra: float, dec: float, size_deg: float, overscan: float | None = None) -> Path: ...
+    def get(self, obs: SiaObservation, ra: float, dec: float, size_deg: float, overscan: float | None = None, *, cached_only: bool = False) -> Path: ...
 
 
 def frame_id(frame: DynamicFrame) -> str:
@@ -341,7 +341,7 @@ class DynamicBlinkService:
         for path in self._s.blink_calibration_seed_files:
             self._registry.seed_from_file(Path(path))
 
-    def _ensure_calibrations(self, predictions: list[Prediction], ra: float, dec: float) -> tuple[dict[str, DetectorCalibration], dict[str, str]]:
+    def _ensure_calibrations(self, predictions: list[Prediction], ra: float, dec: float, cached_fov: float | None = None) -> tuple[dict[str, DetectorCalibration], dict[str, str]]:
         """Calibration per detector (memory/disk/local seed, else a tiny IRSA cutout). Failures exclude the detector."""
         self._seed_calibrations()
         need: dict[str, Prediction] = {}
@@ -358,7 +358,10 @@ class DynamicBlinkService:
 
         def bootstrap(det: str, pred: Prediction) -> tuple[str, DetectorCalibration | None, str]:
             try:
-                path = self._store.get(pred.obs, ra, dec, CALIBRATION_BOOTSTRAP_FOV, overscan=1.0)
+                if cached_fov is not None:
+                    path = self._store.get(pred.obs, ra, dec, cached_fov, cached_only=True)
+                else:
+                    path = self._store.get(pred.obs, ra, dec, CALIBRATION_BOOTSTRAP_FOV, overscan=1.0)
                 with fits.open(path, memmap=False) as hdul:
                     cal = calibration_from_hdul(hdul, expected_detector=det)
                 self._registry.register(cal)
@@ -383,8 +386,35 @@ class DynamicBlinkService:
 
     # -- analysis --------------------------------------------------------------------------------
     def _analyse(self, ra: float, dec: float, fov: float) -> DynamicResult:
+        try:
+            observations, _ = self._irsa.search(ra, dec)
+        except (UpstreamUnavailable, UpstreamTimeout) as outage:
+            snapshot = self._irsa.cached_search(ra, dec)
+            if snapshot is None:
+                raise
+            observations, saved = snapshot
+            available = []
+            for obs in observations:
+                try:
+                    self._store.get(obs, ra, dec, fov, cached_only=True)
+                    available.append(obs)
+                except UpstreamInvalidResponse:
+                    continue
+            try:
+                result = self._analyse_observations(ra, dec, fov, available, cached_only=True)
+            except (DynamicSelectionError, UpstreamInvalidResponse, UpstreamUnavailable, UpstreamTimeout) as exc:
+                raise type(outage)(
+                    f"{outage.message} Cached data cannot provide a verified pair for this view: {exc.message}"
+                ) from exc
+            result.warnings.insert(0,
+                f"Cached data; archive unavailable. Discovery metadata saved {saved}; "
+                "newer observations may be missing. Local FITS were revalidated and re-rendered.")
+            return result
+        return self._analyse_observations(ra, dec, fov, observations)
+
+    def _analyse_observations(self, ra: float, dec: float, fov: float, observations: list[SiaObservation],
+                              *, cached_only: bool = False) -> DynamicResult:
         s = self._s
-        observations, _ = self._irsa.search(ra, dec)
         if not observations:
             raise DynamicSelectionError("No SPHEREx DR1 observations in the NASA/IPAC archive cover this position.", "no_observations")
         frame = field_frame(ra, dec)
@@ -415,7 +445,7 @@ class DynamicBlinkService:
         pairable = [p for p in geometric if len(per_detector[p.obs.detector]) >= 2]  # a detector seen in one epoch cannot pair with itself
         if not pairable:
             raise DynamicSelectionError("No detector observed this field in more than one survey epoch with full coverage.", "no_observations")
-        calibrations, failed = self._ensure_calibrations(pairable, ra, dec)
+        calibrations, failed = self._ensure_calibrations(pairable, ra, dec, cached_fov=fov if cached_only else None)
         predictions: list[Prediction] = []
         for p in pairable:
             cal = calibrations.get(p.obs.detector)
@@ -449,7 +479,7 @@ class DynamicBlinkService:
                 continue
             attempts += 1
             try:
-                return self._verify_and_build(cand, ra, dec, fov, attempts, rejected, calibrations, failed)
+                return self._verify_and_build(cand, ra, dec, fov, attempts, rejected, calibrations, failed, cached_only=cached_only)
             except _Reject as rej:
                 rejected.append(f"{cand.a.obs.obs_id} / {cand.b.obs.obs_id}: {rej.detail}")
                 reasons.append(rej.reason)
@@ -478,7 +508,7 @@ class DynamicBlinkService:
             f"(within {s.max_pair_gap_nm:g} nm and {s.max_gap_over_bandwidth:.0%} of the bandwidth). Blinking them would risk false changes.{hint}")
 
     def _verify_and_build(self, cand: PairCandidate, ra: float, dec: float, fov: float, tried: int, rejected: list[str],
-                          calibrations: dict[str, DetectorCalibration], excluded: dict[str, str]) -> DynamicResult:
+                          calibrations: dict[str, DetectorCalibration], excluded: dict[str, str], *, cached_only: bool = False) -> DynamicResult:
         s = self._s
         out_n = output_size_pixels(fov, s.blink_pixel_scale_arcsec)
         out_wcs = build_output_wcs(ra, dec, out_n, s.blink_pixel_scale_arcsec, rotation_deg=float(cand.angle))
@@ -486,9 +516,12 @@ class DynamicBlinkService:
         frames: list[DynamicFrame] = []
 
         def fetch(pred: Prediction):
-            """Cutout and the full image's header, side by side. A bad file rejects this candidate; archive outages propagate."""
+            """Fetch cutout and full-image header together; cached-only mode must not reach IRSA."""
             out: list = []
-            for getter in (lambda: self._store.get(pred.obs, ra, dec, fov), lambda: self._headers.get(pred.obs)):
+            for getter in (
+                lambda: self._store.get(pred.obs, ra, dec, fov, cached_only=cached_only),
+                lambda: self._headers.get(pred.obs, cached_only=cached_only),
+            ):
                 try:
                     out.append(getter())
                 except UpstreamInvalidResponse as exc:
@@ -561,7 +594,7 @@ class DynamicBlinkService:
             notes.append(f"Only {common_good:.1%} of the field is usable in both frames; flagged or uncovered areas are transparent.")
         for f in frames:
             if f.suspect_fraction >= 0.05:
-                notes.append(f"{f.suspect_fraction:.0%} of usable pixels in {f.cutout.obs.iso_date} carry caution flags (transient, outlier, halo, persistence); they are shown, not hidden.")
+                notes.append(f"{f.suspect_fraction:.0%} of usable pixels in {f.cutout.obs.iso_date} carry caution flags (overflow, transient, outlier, halo, persistence); they are shown, not hidden.")
             predicted = calibrations.get(f.cutout.obs.detector)
             if predicted is not None and predicted.fingerprint != f.cutout.calibration.fingerprint:
                 notes.append(f"{f.cutout.obs.obs_id} uses wavelength calibration {f.cutout.calibration.version}, which differs from the one used to shortlist candidates "

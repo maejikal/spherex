@@ -193,7 +193,7 @@ def test_quality_flags_mask_by_name_and_keep_source_pixels(tmp_path):
     )
     make_exposure(b, centre=CENTRE, roll_deg=180.0, date_obs="2025-12-08T00:00:00", mjd=61017.0)
     info = inspect_fits(a)
-    assert info.bad_flag_mask == (1 << 6) | (1 << 27) and not info.bad_flag_mask & (1 << 21)
+    assert info.bad_flag_mask == (1 << 6) and not info.bad_flag_mask & (1 << 21)
     frame = cutouts_for([a, b]).frames[0]
     assert frame.valid[round(HALF), round(HALF)]  # SOURCE-flagged star kept
     # Frame A is unrotated, so output x = HALF + (pixel offset): the NONFUNC patch (+12..+19 px) is at x ~ 44-51.
@@ -419,3 +419,33 @@ def test_replaced_file_is_reloaded(make_client, pair):
     make_exposure(pair[0], centre=CENTRE, sources=sources_at(*STATIONARY), background=0.5, date_obs="2025-05-24T21:54:42.018", mjd=60819.9, obsid="OBS_MAY", sigma_px=2.5)
     second = client.get("/api/blink/cutouts", params=params).json()["frames"][0]["background_mjy_sr"]
     assert first == pytest.approx(0.146, abs=0.002) and second == pytest.approx(0.5, abs=0.002)
+
+
+def test_overflow_pixels_remain_visible(tmp_path):
+    from astropy.io import fits
+
+    path = tmp_path / "overflow.fits"
+    make_exposure(path, centre=CENTRE)
+    with fits.open(path, mode="update") as hdus:
+        hdus["FLAGS"].header["MSKN0001"] = "OVERFLOW"
+        hdus["FLAGS"].data[:] = 1 << 1
+    info = inspect_fits(path)
+    assert not info.bad_flag_mask & (1 << 1)
+    frame = cutouts_for([path]).frames[0]
+    assert frame.valid.all()
+    assert np.isfinite(frame.values).all()
+
+
+@pytest.mark.parametrize("flag", ["NONFUNC", "missing_data", "SUR_ERROR", "HOT", "COLD", "NONLINEAR", "STREAK", "BLOOM", "SNOWBALL", "UNKNOWN_FLAG"])
+def test_only_nonfunc_and_missing_data_flags_are_transparent(tmp_path, flag):
+    from astropy.io import fits
+
+    path = tmp_path / "flag.fits"
+    make_exposure(path, centre=CENTRE)
+    with fits.open(path, mode="update") as hdus:
+        hdus["FLAGS"].header["MSKN0003"] = flag
+        hdus["FLAGS"].data[90:110, 90:110] = (1 << 3) | (1 << 21)
+    frame = cutouts_for([path]).frames[0]
+    visible = flag.upper() not in {"NONFUNC", "MISSING_DATA"}
+    assert bool(frame.valid[32, 32]) == visible
+    assert bool(np.isfinite(frame.values[32, 32])) == visible

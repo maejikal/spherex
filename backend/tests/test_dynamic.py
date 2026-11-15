@@ -506,12 +506,14 @@ def test_quality_flag_policy_source_kept_hard_flags_invalid_suspect_reported(arc
     r = analyse(stack)
     a = r.frames[0]
     masks = a.cutout.masks
-    assert masks.hard & (1 << FLAG_BITS["COLD"]) and masks.hard & (1 << FLAG_BITS["STREAK"]) and masks.hard & (1 << FLAG_BITS["NONFUNC"])
+    assert masks.hard == (1 << FLAG_BITS["NONFUNC"])
     assert not masks.hard & (1 << FLAG_BITS["SOURCE"]) and not masks.hard & (1 << FLAG_BITS["HALO"]) and masks.suspect & (1 << FLAG_BITS["HALO"])
     def out_px(dx, dy):  # output pixel for a May detector pixel offset from the target pixel (north-up, unrotated detector; rows increase northward)
         return round(HALF + dx), round(HALF + dy)
     # hard-invalid regions are transparent
-    assert not a.valid[out_px(-28, 7)[1], out_px(-28, 7)[0]] and not a.valid[out_px(22, -7)[1], out_px(22, -7)[0]] and not a.valid[out_px(-12, -18)[1], out_px(-12, -18)[0]]
+    assert not a.valid[out_px(22, -7)[1], out_px(22, -7)[0]]
+    assert a.valid[out_px(-28, 7)[1], out_px(-28, 7)[0]]
+    assert a.valid[out_px(-12, -18)[1], out_px(-12, -18)[0]]
     # SOURCE-flagged pixels (and the star inside) stay valid and carry their flag; suspect-flagged pixels stay valid and are counted
     assert a.valid[out_px(0, 0)[1], out_px(0, 0)[0]] and a.source_fraction > 0.1
     assert a.valid[out_px(0, -17)[1], out_px(0, -17)[0]] and a.suspect_fraction > 0.02
@@ -828,6 +830,14 @@ def test_headers_are_cached_in_memory_and_on_disk(archive, stack, cfg):
     assert fresh.get(obs)["CRPIX1"] and len(archive.header_requests) == n
 
 
+def test_cached_only_header_lookup_never_fetches_from_archive(archive, stack):
+    det = archive.add(obs_id="W1_2D_0001_3", detector=3, mjd=MAY, target=T, target_pixel=(200, 200))
+    obs = make_obs(det, archive)
+    with pytest.raises(UpstreamInvalidResponse, match="No valid cached full-image header"):
+        stack.headers.get(obs, cached_only=True)
+    assert archive.header_requests == []
+
+
 def test_parse_image_header_handles_truncation_and_garbage(archive):
     det = archive.add(obs_id="W1_2D_0001_3", detector=3, mjd=MAY, target=T, target_pixel=(200, 200), crpix_full=(197.2, 105.4))
     data = det.full_header_bytes()
@@ -986,3 +996,161 @@ def test_real_d3_pair_has_identical_calibration_and_distinct_orientation():
     with fits.open(D3_MAY, memmap=True) as a, fits.open(D3_DEC, memmap=True) as b:
         ca, cb = calibration_from_hdul(a), calibration_from_hdul(b)
     assert ca.fingerprint == cb.fingerprint and ca.version == cb.version  # same calibration for both epochs (the reference finding)
+
+
+@pytest.mark.parametrize("flag", ["OVERFLOW", "HALO", "OUTLIER"])
+def test_suspect_flags_remain_visible_and_counted(archive, stack, flag):
+    standard_pair(archive, may_extra=dict(flag_boxes=((flag, (0, 360, 0, 400)),)))
+    frame = analyse(stack).frames[0]
+    bit = 1 << FLAG_BITS[flag]
+    assert not frame.cutout.masks.hard & bit
+    assert frame.cutout.masks.suspect & bit
+    assert frame.valid.all()
+    assert np.isfinite(frame.values).all()
+    assert (frame.flags & bit).all()
+    assert frame.suspect_fraction == 1.0
+
+
+@pytest.mark.parametrize("flag", ["NONFUNC", "missing_data", "SUR_ERROR", "HOT", "COLD", "NONLINEAR", "STREAK", "BLOOM", "SNOWBALL", "UNKNOWN_FLAG"])
+def test_dynamic_flag_mask_only_excludes_nonfunc_and_missing_data(flag):
+    header = fits.Header({"MSKN0003": flag, "MSKN0021": "SOURCE"})
+    masks = resolve_flag_masks(header)
+    assert masks.hard == ((1 << 3) if flag.upper() in {"NONFUNC", "MISSING_DATA"} else 0)
+
+
+def test_cached_view_survives_restart_and_irsa_outage(archive, stack, cfg, monkeypatch):
+    standard_pair(archive)
+    original = analyse(stack)
+    downloads = len(archive.downloads)
+    from app.services import fits_display
+    render = fits_display.render_frames
+    renders = []
+
+    def track_render(frames):
+        renders.append(True)
+        return render(frames)
+
+    monkeypatch.setattr(fits_display, "render_frames", track_render)
+    # Prove fallback re-renders FITS, rather than serving a previous PNG/result.
+    archive.sia_status = [502] * 10
+    restarted = Stack(cfg)
+    try:
+        recovered = analyse(restarted)
+        assert recovered.images == original.images
+        assert renders == [True]
+        assert recovered.common_good_fraction == original.common_good_fraction
+        assert any("cached" in w.lower() and "unavailable" in w.lower() and "UTC" in w for w in recovered.warnings)
+        assert len(archive.downloads) == downloads
+    finally:
+        restarted.irsa.close()
+
+
+@pytest.mark.parametrize("damage", ["missing_fits", "corrupt_fits", "corrupt_discovery", "other_position", "other_collection", "other_endpoint", "other_fov"])
+def test_cached_view_never_substitutes_missing_or_unrelated_data(archive, stack, cfg, damage):
+    standard_pair(archive)
+    analyse(stack)
+    if damage in {"missing_fits", "corrupt_fits"}:
+        for path in (cfg.blink_cache_dir / "cutouts").glob("*.fits"):
+            if damage == "missing_fits":
+                path.unlink()
+            else:
+                path.write_bytes(b"corrupt")
+    elif damage == "corrupt_discovery":
+        for path in (cfg.blink_cache_dir / "discovery").glob("*.xml"):
+            path.write_bytes(b"corrupt")
+    elif damage == "other_collection":
+        cfg = cfg.model_copy(update={"irsa_collection": "spherex_qr3"})
+    elif damage == "other_endpoint":
+        cfg = cfg.model_copy(update={"irsa_sia_url": "https://irsa.ipac.caltech.edu/other-SIA"})
+    downloads = len(archive.downloads)
+    archive.sia_status = [502] * 20
+    restarted = Stack(cfg)
+    if damage == "other_endpoint":
+        import httpx
+        restarted.irsa._injected = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(502)))
+    try:
+        with pytest.raises(UpstreamUnavailable):
+            restarted.service.analyse(T[0] + (0.01 if damage == "other_position" else 0), T[1], FOV / 2 if damage == "other_fov" else FOV)
+        assert len(archive.downloads) == downloads
+    finally:
+        if restarted.irsa._injected is not None:
+            restarted.irsa._injected.close()
+        restarted.irsa.close()
+
+
+def test_live_discovery_is_preferred_after_restart(archive, stack, cfg):
+    standard_pair(archive)
+    analyse(stack)
+    count = len(archive.sia_requests)
+    restarted = Stack(cfg)
+    try:
+        result = analyse(restarted)
+        assert len(archive.sia_requests) == count + 1
+        assert not any("archive unavailable" in w.lower() for w in result.warnings)
+    finally:
+        restarted.irsa.close()
+
+
+def test_cached_view_bootstraps_calibration_from_cached_science_fits(archive, stack, cfg):
+    import shutil
+
+    standard_pair(archive)
+    analyse(stack)
+    shutil.rmtree(cfg.blink_cache_dir / "calibration")
+    downloads = len(archive.downloads)
+    archive.sia_status = [503] * 10
+    restarted = Stack(cfg)
+    try:
+        result = analyse(restarted)
+        assert result.frames and len(archive.downloads) == downloads
+        assert any("Cached data" in w for w in result.warnings)
+    finally:
+        restarted.irsa.close()
+
+
+def test_cached_view_handles_search_timeout(archive, stack, cfg, monkeypatch):
+    standard_pair(archive)
+    analyse(stack)
+    restarted = Stack(cfg)
+    def timeout(*_args):
+        raise UpstreamTimeout("IRSA timed out")
+    monkeypatch.setattr(restarted.irsa, "_search_uncached", timeout)
+    try:
+        assert any("Cached data" in w for w in analyse(restarted).warnings)
+    finally:
+        restarted.irsa.close()
+
+
+def test_cached_view_does_not_hide_invalid_live_response(archive, stack, cfg, monkeypatch):
+    standard_pair(archive)
+    analyse(stack)
+    restarted = Stack(cfg)
+    def invalid(*_args):
+        raise UpstreamInvalidResponse("Malformed live response")
+    monkeypatch.setattr(restarted.irsa, "_search_uncached", invalid)
+    try:
+        with pytest.raises(UpstreamInvalidResponse, match="Malformed live response"):
+            analyse(restarted)
+    finally:
+        restarted.irsa.close()
+
+
+def test_cached_view_survives_memory_cache_expiry(archive, cfg):
+    standard_pair(archive)
+    cfg = cfg.model_copy(update={"sia_cache_ttl_seconds": 0, "blink_cache_ttl_seconds": 0})
+    stack = Stack(cfg)
+    try:
+        analyse(stack)
+        archive.sia_status = [502] * 10
+        assert any("Cached data" in w for w in analyse(stack).warnings)
+    finally:
+        stack.irsa.close()
+
+
+def test_discovery_persistence_failure_does_not_break_live_search(archive, stack, monkeypatch):
+    standard_pair(archive)
+    def fail(*_args, **_kwargs):
+        raise OSError("Read-only directory")
+    monkeypatch.setattr("app.services.discovery_cache.os.replace", fail)
+    observations, _ = stack.irsa.search(*T)
+    assert len(observations) == 2

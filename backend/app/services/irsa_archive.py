@@ -31,6 +31,7 @@ from astropy.wcs import WCS
 from ..config import Settings
 from ..models.errors import UpstreamInvalidResponse, UpstreamTimeout, UpstreamUnavailable
 from ..utils.ttl_cache import TTLCache
+from .discovery_cache import DiscoveryCache
 from .pair_selection import SiaObservation, observations_from_table
 
 log = logging.getLogger("skyexplorer.irsa")
@@ -100,6 +101,9 @@ class IrsaClient:
         self._made: httpx.Client | None = None
         self._make_lock = threading.Lock()
         self._sia_cache: TTLCache[tuple[list[SiaObservation], list[str]]] = TTLCache(settings.sia_cache_entries, settings.sia_cache_ttl_seconds)
+        self._discovery = DiscoveryCache(
+            Path(settings.blink_cache_dir).expanduser() / "discovery", settings.sia_cache_entries, MAX_SIA_BYTES,
+        )
         self._cache_lock = threading.Lock()
         self._inflight: dict[str, threading.Lock] = {}
 
@@ -125,7 +129,7 @@ class IrsaClient:
     # -- SIA2 -------------------------------------------------------------------------------------
     def search(self, ra: float, dec: float) -> tuple[list[SiaObservation], list[str]]:
         """Observations whose footprint contains (ra, dec), with per-record problems. Cached per position."""
-        key = f"{ra:.4f}|{dec:.4f}|{self._s.irsa_collection}"
+        key = self._search_key(ra, dec)
         with self._cache_lock:
             hit = self._sia_cache.get(key)
             gate = self._inflight.setdefault(key, threading.Lock())
@@ -141,6 +145,22 @@ class IrsaClient:
                 self._sia_cache.set(key, result)
             return result
 
+    def _search_key(self, ra: float, dec: float) -> str:
+        # Same precision as the actual request; include endpoint, collection and geometry version.
+        return f"v1|{self._s.irsa_sia_url}|{self._s.irsa_collection}|{ra:.6f}|{dec:.6f}|{SIA_RADIUS_DEG}"
+
+    def cached_search(self, ra: float, dec: float) -> tuple[list[SiaObservation], str] | None:
+        """Explicit stale-on-outage lookup; never inserts stale records into the live TTL cache."""
+        snapshot = self._discovery.read(self._search_key(ra, dec))
+        if snapshot is None:
+            return None
+        content, saved = snapshot
+        try:
+            observations, _ = self._parse_search(content)
+        except UpstreamInvalidResponse:
+            return None
+        return observations, saved
+
     def _search_uncached(self, ra: float, dec: float) -> tuple[list[SiaObservation], list[str]]:
         params = {"COLLECTION": self._s.irsa_collection, "POS": f"CIRCLE {ra:.6f} {dec:.6f} {SIA_RADIUS_DEG}"}
 
@@ -155,6 +175,11 @@ class IrsaClient:
             return response.content
 
         content = _with_retries(once, retries=self._s.irsa_max_retries, backoff=self._s.irsa_backoff_base, sleep=self._sleep, what="the observation search")
+        result = self._parse_search(content)
+        self._discovery.write(self._search_key(ra, dec), content)
+        return result
+
+    def _parse_search(self, content: bytes) -> tuple[list[SiaObservation], list[str]]:
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -282,7 +307,7 @@ class CutoutStore:
     def path_for(self, obs: SiaObservation, ra: float, dec: float, size_deg: float, overscan: float) -> Path:
         return self._dir / f"{obs.obs_id}_{obs.detector}_{self.cache_key(obs, ra, dec, size_deg, overscan)}.fits"
 
-    def get(self, obs: SiaObservation, ra: float, dec: float, size_deg: float, overscan: float | None = None) -> Path:
+    def get(self, obs: SiaObservation, ra: float, dec: float, size_deg: float, overscan: float | None = None, *, cached_only: bool = False) -> Path:
         """A validated local cutout of ``size_deg * overscan`` degrees (downloading it if needed)."""
         overscan = self._s.dynamic_overscan if overscan is None else overscan
         target = self.path_for(obs, ra, dec, size_deg, overscan)
@@ -297,6 +322,8 @@ class CutoutStore:
                 except CutoutCorrupt:
                     log.warning("discarding corrupt cached cutout %s", target.name)
                     target.unlink(missing_ok=True)
+            if cached_only:
+                raise UpstreamInvalidResponse(f"No valid cached cutout for {obs.obs_id} at this position and field size.")
             self._dir.mkdir(parents=True, exist_ok=True)
             query = urlencode({"center": f"{ra:.6f},{dec:.6f}d", "size": f"{size_deg * overscan:.6f}"})
             tmp = target.with_name(f"{target.name}.{uuid.uuid4().hex}.part")
@@ -354,7 +381,7 @@ class FullHeaderStore:
     def _path(self, url: str) -> Path:
         return self._dir / f"{hashlib.sha256(url.split('?')[0].encode()).hexdigest()[:32]}.hdr"
 
-    def get(self, obs: SiaObservation) -> fits.Header:
+    def get(self, obs: SiaObservation, *, cached_only: bool = False) -> fits.Header:
         url = obs.access_url.split("?")[0]
         with self._lock:
             hit = self._memory.get(url)
@@ -365,7 +392,11 @@ class FullHeaderStore:
             with self._lock:
                 hit = self._memory.get(url)
             if hit is None:
-                hit = self._read_disk(url) or self._fetch_and_store(url)
+                hit = self._read_disk(url)
+                if hit is None:
+                    if cached_only:
+                        raise UpstreamInvalidResponse(f"No valid cached full-image header for {obs.obs_id}.")
+                    hit = self._fetch_and_store(url)
                 with self._lock:
                     self._memory[url] = hit
         return hit.copy()
