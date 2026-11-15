@@ -44,7 +44,7 @@ the close button returns space to the sky, and no horizontal scrolling occurs.
 | `src/sky/aladin/controller.ts` | Owns the Aladin instance: view sync, channel switching, grid, selection marker, tile loading/failure signals |
 | `src/sky/aladin/fov.ts` | `scale` (arcsec per CSS pixel) <-> Aladin field of view: `fov = viewportWidth x scale / 3600` |
 | `src/sky/spherex/` | HiPS `properties` parsing/validation, channel table, frame <-> frequency mapping, service config |
-| `src/components/WavelengthSelector.tsx` | Dropdown + slider + previous/next for the 102 channels (inside the View window) |
+| `src/components/WavelengthSelector.tsx` | Dropdown + slider + previous/next for the 102 channels (below Go to coordinates in the Find window) |
 | `src/state/` | Zustand store and URL (de)serialisation |
 | `src/api/client.ts` | HTTP + validation for the FastAPI routes |
 

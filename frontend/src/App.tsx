@@ -432,7 +432,18 @@ export default function App() {
           workspaceRef={workspaceRef}
           onClose={() => setPanels((current) => ({ ...current, find: false }))}
         >
-          <FindPanel view={view} onNavigate={navigateTo} navigationGuard={navigationGuard} syncRevision={coordinateSync} />
+          <FindPanel
+            view={view}
+            onNavigate={navigateTo}
+            navigationGuard={navigationGuard}
+            syncRevision={coordinateSync}
+            survey={survey.data}
+            surveyPending={survey.isPending}
+            surveyError={survey.error}
+            frame={view && survey.data ? resolveFrame(survey.data, view.channel) : null}
+            loading={viewerStatus.loading}
+            onChannelChange={changeChannel}
+          />
         </ToolWindow>
 
         <ToolWindow
@@ -453,12 +464,6 @@ export default function App() {
             width={dimensions.width}
             height={dimensions.height}
             crosshair={crosshair}
-            survey={survey.data}
-            surveyPending={survey.isPending}
-            surveyError={survey.error}
-            frame={view && survey.data ? resolveFrame(survey.data, view.channel) : null}
-            loading={viewerStatus.loading}
-            onChannelChange={changeChannel}
             canReset={Boolean(homeView && view)}
             onZoom={zoom}
             onPan={panDirection}

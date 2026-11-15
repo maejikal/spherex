@@ -30,6 +30,13 @@ import type { SphereXSurveyInfo } from '../sky/spherex/properties.ts';
 import { WavelengthSelector } from './WavelengthSelector.tsx';
 
 interface FindPanelProps {
+  survey: SphereXSurveyInfo | undefined;
+  surveyPending: boolean;
+  surveyError: Error | null;
+  frame: number | null;
+  loading: boolean;
+  onChannelChange: (frame: number) => void;
+
   view: ExplorerView | null;
   onNavigate: (coordinates: SkyCoordinates, label?: string) => void;
   /** Shared with the app: every navigation supersedes a name/random lookup that is still pending. */
@@ -38,7 +45,10 @@ interface FindPanelProps {
   syncRevision: number;
 }
 
-export function FindPanel({ view, onNavigate, navigationGuard, syncRevision }: FindPanelProps) {
+export function FindPanel({
+  view, onNavigate, navigationGuard, syncRevision,
+  survey, surveyPending, surveyError, frame, loading, onChannelChange,
+}: FindPanelProps) {
   const [objectName, setObjectName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
   const [draft, setDraft] = useState(() => draftFromView(view));
@@ -288,6 +298,17 @@ export function FindPanel({ view, onNavigate, navigationGuard, syncRevision }: F
         </form>
       </section>
 
+      <WavelengthSelector
+        sectionClassName="find-wavelength-section"
+        survey={survey}
+        surveyPending={surveyPending}
+        surveyError={surveyError}
+        frame={frame}
+        loading={loading}
+        disabled={!view}
+        onChange={onChannelChange}
+      />
+
       <section className="panel-section find-targets" aria-labelledby="suggested-heading">
         <div className="find-section-heading">
           <h3 id="suggested-heading">Verified destinations</h3>
@@ -340,12 +361,6 @@ interface ViewPanelProps {
   width: number;
   height: number;
   crosshair: boolean;
-  survey: SphereXSurveyInfo | undefined;
-  surveyPending: boolean;
-  surveyError: Error | null;
-  frame: number | null;
-  loading: boolean;
-  onChannelChange: (frame: number) => void;
   canReset: boolean;
   onZoom: (direction: 'in' | 'out') => void;
   onPan: (direction: 'north' | 'south' | 'east' | 'west') => void;
@@ -359,12 +374,6 @@ export function ViewPanel({
   width,
   height,
   crosshair,
-  survey,
-  surveyPending,
-  surveyError,
-  frame,
-  loading,
-  onChannelChange,
   canReset,
   onZoom,
   onPan,
@@ -376,17 +385,7 @@ export function ViewPanel({
 
   return (
     <div className="panel-stack view-panel-stack">
-      {!view && <p className="view-empty-state"><Info aria-hidden="true" size={14} />Load a position to enable wavelength, zoom, pan, and grid controls.</p>}
-      <WavelengthSelector
-        survey={survey}
-        surveyPending={surveyPending}
-        surveyError={surveyError}
-        frame={frame}
-        loading={loading}
-        disabled={!view}
-        onChange={onChannelChange}
-      />
-
+      {!view && <p className="view-empty-state"><Info aria-hidden="true" size={14} />Load a position to enable zoom, pan, and grid controls.</p>}
       <section className="panel-section" aria-labelledby="navigate-image-heading">
         <div className="section-heading view-section-heading">
           <h3 id="navigate-image-heading">Navigate image</h3>
