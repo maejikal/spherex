@@ -174,3 +174,7 @@ See [`LICENSE`](LICENSE). Aladin Lite is LGPL-3.0 (CDS). Do not reuse SDSS brand
 ### Browser-local flagged observations
 
 Blink viewer now supports **Flag for review**, per-image crosshair annotations, and a **Community review** queue. Cases retain original image evidence in IndexedDB on this browser only. Demo reviewer identities illustrate five-review/80%-support approval; author closes voting. MPC/observatory handoff is explicitly simulated, never an external submission or confirmed discovery. Case URLs do not transfer evidence across browsers. See [frontend review workflow](frontend/README.md#community-review-prototype) for controls, persistence limits and future authenticated-backend boundary.
+
+## SI Disclosure
+
+Generative AI tools, including ChatGPT and coding assistants, were used to assist with brainstorming, UI/UX design, code generation, debugging, and documentation. AI-assisted outputs were reviewed and refined by our team.
