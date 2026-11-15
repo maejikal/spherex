@@ -22,7 +22,7 @@ from .spherex_calibration import DetectorCalibration
 
 ANGLES = tuple(range(0, 180, 15))
 _DETECTOR_RE = re.compile(r"D([1-6])$")
-_RELEASE_RE = re.compile(r"/(l2[a-z]?-v[\w.-]+)/")
+_RELEASE_RE = re.compile(r"/(l2[a-z]?(?:_retry)?-v[\w.-]+)/")  # also the reprocessed "l2b_retry-v27-..." files
 
 
 class SiaRecordError(ValueError):

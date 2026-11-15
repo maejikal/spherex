@@ -25,7 +25,7 @@ from ..models.errors import DynamicSelectionError, InvalidParameters, UpstreamIn
 from ..utils.ttl_cache import TTLCache
 from . import fits_display as fd
 from .fits_cutout import BAD_FLAG_NAMES, SUPPORTED_UNITS, build_output_wcs, output_sky_grid, resample_to_grid
-from .irsa_archive import CutoutCorrupt, IrsaClient
+from .irsa_archive import CutoutCorrupt, FullHeaderStore, IrsaClient
 from .pair_selection import (
     PairCandidate,
     Prediction,
@@ -37,7 +37,7 @@ from .pair_selection import (
     predict,
     rank_pairs,
 )
-from .spherex_calibration import CalibrationError, CalibrationRegistry, DetectorCalibration, calibration_from_hdul, full_frame_offset
+from .spherex_calibration import CalibrationError, CalibrationRegistry, DetectorCalibration, calibration_from_hdul, header_frame_offset
 
 log = logging.getLogger("skyexplorer.dynamic")
 
@@ -46,13 +46,21 @@ HARD_INVALID_NAMES = frozenset(BAD_FLAG_NAMES | {"COLD"})
 SUSPECT_NAMES = frozenset({"TRANSIENT", "PERSIST", "OUTLIER", "HALO", "DICHROIC", "PHANMISS", "CROSSTALK", "GHOST", "GHOST_FPA", "GHOST_EXT"})
 INFORMATIONAL_NAMES = frozenset({"SOURCE", "FULLSAMPLE"})  # never masked
 CALIBRATION_BOOTSTRAP_FOV = 0.01
+# Reasons that point at geometry/metadata (not at the sky or the data): worth trying more candidates for.
+METADATA_REASONS = frozenset({"coordinate_mapping_failed", "footprint_mismatch", "invalid_calibration"})
+# Shown to the user (concise). Technical detail goes to the backend log. Ties between reasons are broken in this order.
 REASON_TEXT = {
+    "coordinate_mapping_failed": "the detector coordinates of the observations could not be verified, so their wavelengths could not be established reliably",
+    "footprint_mismatch": "the archive's footprint metadata contradicts the observations' own sky coordinates",
+    "invalid_calibration": "the wavelength calibration table was unavailable or invalid",
+    "quality_failure": "too many invalid pixels",
     "insufficient_coverage": "insufficient field coverage",
     "wavelength_mismatch": "wavelength mismatch",
-    "invalid_calibration": "calibration or position check failed",
-    "quality_failure": "too many invalid pixels",
     "no_observations": "no usable observation",
 }
+REASON_PRIORITY = tuple(REASON_TEXT)
+# For these the failing numbers are meaningful to the user, so the first detail is included in the message.
+DETAIL_IN_MESSAGE = frozenset({"quality_failure", "insufficient_coverage", "wavelength_mismatch"})
 
 
 @dataclass(frozen=True)
@@ -75,11 +83,14 @@ def resolve_flag_masks(header: fits.Header) -> FlagMasks:
 
 
 class _Reject(Exception):
-    """A candidate pair failed verification. ``reason`` is one of DynamicSelectionError.REASONS."""
+    """A candidate pair failed verification. ``reason`` is one of DynamicSelectionError.REASONS.
 
-    def __init__(self, reason: str, detail: str) -> None:
+    ``obs`` names the single observation at fault (``(obs_id, detector)``), if there is one, so the same
+    observation is not downloaded and re-verified again in another pair."""
+
+    def __init__(self, reason: str, detail: str, obs: tuple[str, str] | None = None) -> None:
         super().__init__(detail)
-        self.reason, self.detail = reason, detail
+        self.reason, self.detail, self.obs = reason, detail, obs
 
 
 @dataclass(eq=False)
@@ -103,23 +114,81 @@ def load_cutout(path: Path, obs: SiaObservation) -> LoadedCutout:
             header = hdul["IMAGE"].header.copy()
             bunit = str(header.get("BUNIT", "")).strip()
             if bunit not in SUPPORTED_UNITS:
-                raise _Reject("quality_failure", f"{obs.obs_id}: unsupported unit '{bunit}'")
+                raise _Reject("quality_failure", f"{obs.obs_id}: unsupported unit '{bunit}'", (obs.obs_id, obs.detector))
             cal = calibration_from_hdul(hdul, expected_detector=obs.detector)
             data = np.array(hdul["IMAGE"].data, dtype=np.float32)
             variance = np.array(hdul["VARIANCE"].data, dtype=np.float32)
             flags = np.array(hdul["FLAGS"].data).astype(np.int64)
             masks = resolve_flag_masks(hdul["FLAGS"].header)
     except CalibrationError as exc:
-        raise _Reject("invalid_calibration", f"{obs.obs_id}: {exc}") from exc
+        raise _Reject("invalid_calibration", f"{obs.obs_id}: {exc}", (obs.obs_id, obs.detector)) from exc
     except (OSError, KeyError, ValueError) as exc:
-        raise _Reject("quality_failure", f"{obs.obs_id}: unreadable cutout ({exc})") from exc
+        raise _Reject("quality_failure", f"{obs.obs_id}: unreadable cutout ({exc})", (obs.obs_id, obs.detector)) from exc
     wcs = WCS(header)
     ctype = [str(c) for c in wcs.wcs.ctype]
     if not wcs.has_celestial or "TAN" not in ctype[0] or str(header.get("RADESYS", "ICRS")).strip().upper() not in {"ICRS", ""}:
-        raise _Reject("invalid_calibration", f"{obs.obs_id}: unsupported celestial WCS {ctype}")
+        raise _Reject("coordinate_mapping_failed", f"{obs.obs_id}: unsupported celestial WCS {ctype}", (obs.obs_id, obs.detector))
     if not (data.shape == variance.shape == flags.shape):
-        raise _Reject("quality_failure", f"{obs.obs_id}: image/variance/flags shapes differ")
+        raise _Reject("quality_failure", f"{obs.obs_id}: image/variance/flags shapes differ", (obs.obs_id, obs.detector))
     return LoadedCutout(obs, path, header, wcs, data, variance, flags, masks, cal, str(header.get("DATE-OBS", "")), str(header.get("OBSID", obs.obs_id)))
+
+
+@dataclass(frozen=True)
+class DetectorMapping:
+    """How this cutout's pixels map to the full detector (the frame the wavelength table is defined in)."""
+
+    dx: float  # add to a zero-based cutout pixel to get the zero-based full-detector pixel
+    dy: float
+    exact_xy: tuple[float, float]  # target position on the full detector, from the archive's own full-image WCS
+    full_crpix: tuple[float, float]
+    prediction_error_px: float  # distance from the SIA-polygon prediction (informational unless large)
+
+
+def establish_mapping(cut: LoadedCutout, pred: Prediction, full_header: fits.Header, ra: float, dec: float, s: Settings) -> DetectorMapping:
+    """Verify, from the archive's own full-image header, how this cutout sits on the detector.
+
+    The full header supplies the original CRPIX (which is *not* always the detector centre) and WCS. Checks:
+    detector size and number agree with the metadata; the crop origin is a whole number of pixels; the cutout WCS
+    and the full WCS give the same sky position at the mapped pixels; the position derived from the cutout equals
+    the one derived directly from the full WCS. Only then is the wavelength looked up.
+    """
+    obs = cut.obs
+    key = (obs.obs_id, obs.detector)
+
+    def fail(reason: str, detail: str) -> _Reject:
+        return _Reject(reason, f"{obs.obs_id} {obs.detector}: {detail}", key)
+
+    if (full_header.get("NAXIS1"), full_header.get("NAXIS2")) != (obs.nx, obs.ny):
+        raise fail("coordinate_mapping_failed", f"full image is {full_header.get('NAXIS1')}x{full_header.get('NAXIS2')} but the archive lists {obs.nx}x{obs.ny}")
+    if int(full_header.get("DETECTOR", -1)) != int(obs.detector[1:]):
+        raise fail("coordinate_mapping_failed", f"full header is detector {full_header.get('DETECTOR')}, archive says {obs.detector}")
+    full_wcs = WCS(full_header)
+    if not full_wcs.has_celestial or "TAN" not in str(full_wcs.wcs.ctype[0]):
+        raise fail("coordinate_mapping_failed", f"unsupported full-image WCS {list(full_wcs.wcs.ctype)}")
+    try:
+        dx, dy = header_frame_offset(cut.header, full_header)
+    except CalibrationError as exc:
+        raise fail("coordinate_mapping_failed", str(exc)) from exc
+
+    ny, nx = cut.data.shape
+    probe = np.array([[0.0, 0.0], [nx - 1.0, 0.0], [nx - 1.0, ny - 1.0], [0.0, ny - 1.0], [(nx - 1) / 2, (ny - 1) / 2]])
+    cut_sky = np.column_stack(cut.wcs.all_pix2world(probe[:, 0], probe[:, 1], 0))
+    full_sky = np.column_stack(full_wcs.all_pix2world(probe[:, 0] + dx, probe[:, 1] + dy, 0))
+    sep = np.hypot((cut_sky[:, 0] - full_sky[:, 0] + 180) % 360 - 180, cut_sky[:, 1] - full_sky[:, 1]) * 3600
+    if not np.all(np.isfinite(sep)) or float(sep.max()) > 0.05:
+        raise fail("coordinate_mapping_failed", f"cutout and full-image WCS disagree by {float(sep.max()):.3f} arcsec at the mapped pixels")
+
+    lx, ly = (float(v) for v in cut.wcs.all_world2pix(ra, dec, 0))
+    exact = (lx + dx, ly + dy)
+    direct = tuple(float(v) for v in full_wcs.all_world2pix(ra, dec, 0))
+    if not (np.isfinite(exact).all() and np.isfinite(direct).all()) or math.hypot(exact[0] - direct[0], exact[1] - direct[1]) > 0.05:
+        raise fail("coordinate_mapping_failed", f"cutout-derived position {exact} differs from the full-image WCS position {direct}")
+    if not (-0.5 <= exact[0] <= obs.nx - 0.5 and -0.5 <= exact[1] <= obs.ny - 0.5):
+        raise fail("insufficient_coverage", f"target maps to {exact[0]:.0f},{exact[1]:.0f}, outside the {obs.nx}x{obs.ny} detector")
+    error = math.hypot(exact[0] - pred.x, exact[1] - pred.y)
+    if error > s.max_footprint_error_px:
+        raise fail("footprint_mismatch", f"archive footprint predicts ({pred.x:.0f},{pred.y:.0f}) but the file's own WCS places the target at ({exact[0]:.0f},{exact[1]:.0f}): {error:.0f} px apart")
+    return DetectorMapping(dx, dy, exact, (float(full_header["CRPIX1"]), float(full_header["CRPIX2"])), error)
 
 
 @dataclass(eq=False)
@@ -136,10 +205,11 @@ class DynamicFrame:
     centre_wavelength_um: float
     centre_bandwidth_um: float
     centre_xy: tuple[float, float]  # exact zero-based full-detector position of the target
+    mapping: DetectorMapping | None = None
 
 
 def resample_cutout(cut: LoadedCutout, out_wcs: WCS, sky_ra: np.ndarray, sky_dec: np.ndarray, ra: float, dec: float,
-                    pred: Prediction, s: Settings) -> DynamicFrame:
+                    mapping: DetectorMapping, s: Settings) -> DynamicFrame:
     n = sky_ra.shape[0]
     sx, sy = cut.wcs.all_world2pix(sky_ra, sky_dec, 0, quiet=True, tolerance=1e-4, maxiter=40, adaptive=True)
     sx, sy = np.asarray(sx, float), np.asarray(sy, float)
@@ -153,7 +223,7 @@ def resample_cutout(cut: LoadedCutout, out_wcs: WCS, sky_ra: np.ndarray, sky_dec
     nc = np.clip(np.rint(np.where(inside, sx, 0)).astype(int), 0, nx - 1)
     flags_out = np.where(inside, cut.flags[nr, nc], 0).astype(np.int32)
 
-    dx, dy = full_frame_offset(cut.header, cut.obs.nx, cut.obs.ny)
+    dx, dy = mapping.dx, mapping.dy
     lam_map, bw_map = cut.calibration.lookup(sx + dx, sy + dy)
     cx, cy = (float(v) for v in cut.wcs.all_world2pix(ra, dec, 0))
     clam, cbw = cut.calibration.lookup(np.array([cx + dx]), np.array([cy + dy]))
@@ -171,6 +241,7 @@ def resample_cutout(cut: LoadedCutout, out_wcs: WCS, sky_ra: np.ndarray, sky_dec
         centre_wavelength_um=float(clam[0]),
         centre_bandwidth_um=float(cbw[0]),
         centre_xy=(cx + dx, cy + dy),
+        mapping=mapping,
     )
 
 
@@ -204,6 +275,10 @@ class DynamicResult:
     collection: str
 
 
+class HeaderSource(Protocol):
+    def get(self, obs: SiaObservation) -> fits.Header: ...
+
+
 class CutoutSource(Protocol):
     def get(self, obs: SiaObservation, ra: float, dec: float, size_deg: float, overscan: float | None = None) -> Path: ...
 
@@ -213,10 +288,12 @@ def frame_id(frame: DynamicFrame) -> str:
 
 
 class DynamicBlinkService:
-    def __init__(self, settings: Settings, irsa: IrsaClient, store: CutoutSource, registry: CalibrationRegistry) -> None:
+    def __init__(self, settings: Settings, irsa: IrsaClient, store: CutoutSource, registry: CalibrationRegistry,
+                 headers: HeaderSource | None = None) -> None:
         self._s = settings
         self._irsa = irsa
         self._store = store
+        self._headers: HeaderSource = headers or FullHeaderStore(settings, irsa)
         self._registry = registry
         self._lock = threading.Lock()
         self._gates: dict[str, threading.Lock] = {}
@@ -361,16 +438,33 @@ class DynamicBlinkService:
 
         rejected: list[str] = []
         reasons: list[str] = []
-        for tried, cand in enumerate(report.candidates[: s.top_pairs_to_try], 1):
+        bad_observations: dict[tuple[str, str], str] = {}  # an observation that failed once is never downloaded/verified again
+        attempts, limit = 0, s.top_pairs_to_try
+        for cand in report.candidates:
+            if attempts >= limit:
+                break
+            known = next((k for k in ((cand.a.obs.obs_id, cand.a.obs.detector), (cand.b.obs.obs_id, cand.b.obs.detector)) if k in bad_observations), None)
+            if known is not None:
+                log.info("skipping pair %s: %s %s already rejected (%s)", cand.key, known[0], known[1], bad_observations[known])
+                continue
+            attempts += 1
             try:
-                return self._verify_and_build(cand, ra, dec, fov, tried, rejected, calibrations, failed)
+                return self._verify_and_build(cand, ra, dec, fov, attempts, rejected, calibrations, failed)
             except _Reject as rej:
                 rejected.append(f"{cand.a.obs.obs_id} / {cand.b.obs.obs_id}: {rej.detail}")
                 reasons.append(rej.reason)
-                log.info("rejected pair %s: %s", cand.key, rej.detail)
-        reason = max(set(reasons), key=lambda r: (reasons.count(r), r))
+                if rej.obs is not None:
+                    bad_observations[rej.obs] = rej.reason
+                log.warning("rejected pair %s [%s]: %s", cand.key, rej.reason, rej.detail)  # full technical detail stays in the log
+                # Geometry/metadata failures say nothing about the sky: look further down the ranking (bounded).
+                if attempts >= limit and limit < s.max_pairs_to_try and all(r in METADATA_REASONS for r in reasons):
+                    limit = s.max_pairs_to_try
+        if not reasons:
+            raise DynamicSelectionError("Every shortlisted observation pair involved an observation that had already failed verification.", "quality_failure")
+        reason = max(set(reasons), key=lambda r: (reasons.count(r), -REASON_PRIORITY.index(r)))
+        detail = f" ({rejected[0].split(': ', 1)[-1]})" if reason in DETAIL_IN_MESSAGE else ""
         raise DynamicSelectionError(
-            f"None of the {len(rejected)} best candidate pair(s) passed verification. Most common problem: {REASON_TEXT[reason]}. First: {rejected[0]}", reason)
+            f"None of the {len(reasons)} best candidate pair(s) passed verification: {REASON_TEXT[reason]}{detail}.", reason)
 
     def _no_candidate_reason(self, r, fov: float) -> tuple[str, str]:
         s = self._s
@@ -391,26 +485,38 @@ class DynamicBlinkService:
         sky_ra, sky_dec = output_sky_grid(out_wcs, out_n)
         frames: list[DynamicFrame] = []
 
-        def fetch(pred: Prediction) -> Path | UpstreamInvalidResponse:
-            try:
-                return self._store.get(pred.obs, ra, dec, fov)
-            except UpstreamInvalidResponse as exc:  # a bad cutout rejects this candidate; outages propagate
-                return exc
+        def fetch(pred: Prediction):
+            """Cutout and the full image's header, side by side. A bad file rejects this candidate; archive outages propagate."""
+            out: list = []
+            for getter in (lambda: self._store.get(pred.obs, ra, dec, fov), lambda: self._headers.get(pred.obs)):
+                try:
+                    out.append(getter())
+                except UpstreamInvalidResponse as exc:
+                    out.append(exc)
+            return out
 
-        with ThreadPoolExecutor(max_workers=2) as pool:  # the two downloads are independent: run them side by side
+        with ThreadPoolExecutor(max_workers=2) as pool:  # the two observations are independent: fetch them side by side
             fetched = list(pool.map(fetch, (cand.a, cand.b)))
-        for pred, path in zip((cand.a, cand.b), fetched):
+        position_notes: list[str] = []
+        for pred, (path, header) in zip((cand.a, cand.b), fetched):
+            key = (pred.obs.obs_id, pred.obs.detector)
             if isinstance(path, UpstreamInvalidResponse):
-                raise _Reject("quality_failure", path.message) from path
+                raise _Reject("quality_failure", f"{pred.obs.obs_id}: {path.message}", key) from path
+            if isinstance(header, UpstreamInvalidResponse):
+                raise _Reject("coordinate_mapping_failed", f"{pred.obs.obs_id}: archive header unavailable ({header.message})", key) from header
             cut = load_cutout(path, pred.obs)
-            frame = resample_cutout(cut, out_wcs, sky_ra, sky_dec, ra, dec, pred, s)
-            err = math.hypot(frame.centre_xy[0] - pred.x, frame.centre_xy[1] - pred.y)
-            if not math.isfinite(err) or err > s.max_position_error_px:
-                raise _Reject("invalid_calibration", f"{pred.obs.obs_id}: exact detector position differs from the SIA prediction by {err:.1f} px (limit {s.max_position_error_px:g})")
+            mapping = establish_mapping(cut, pred, header, ra, dec, s)
+            frame = resample_cutout(cut, out_wcs, sky_ra, sky_dec, ra, dec, mapping, s)
             if not math.isfinite(frame.centre_wavelength_um):
-                raise _Reject("invalid_calibration", f"{pred.obs.obs_id}: target lies outside the wavelength calibration grid")
+                raise _Reject("invalid_calibration", f"{pred.obs.obs_id}: target lies outside the wavelength calibration grid", key)
             if frame.geometric_coverage < s.min_geometric_coverage:
-                raise _Reject("insufficient_coverage", f"{pred.obs.obs_id}: only {frame.geometric_coverage:.1%} of the field lies inside the cutout")
+                raise _Reject("insufficient_coverage", f"{pred.obs.obs_id}: only {frame.geometric_coverage:.1%} of the field lies inside the cutout", key)
+            if mapping.prediction_error_px > s.max_position_error_px:
+                # The file's own WCS and CRPIX were verified, so the wavelength is trustworthy; only the archive's footprint estimate was off.
+                position_notes.append(
+                    f"The archive's footprint metadata for {pred.obs.obs_id} ({pred.obs.detector}) is {mapping.prediction_error_px:.0f} px off the position given by the file's own header; "
+                    "the verified header position was used for the wavelength.")
+                log.warning("%s: SIA prediction %.0f px from the verified position (header CRPIX %s)", pred.obs.obs_id, mapping.prediction_error_px, mapping.full_crpix)
             frames.append(frame)
         fa, fb = frames
         gap_nm = abs(fa.centre_wavelength_um - fb.centre_wavelength_um) * 1000
@@ -438,7 +544,7 @@ class DynamicBlinkService:
             frames=frames, images=dict(zip(ids, pngs)), display=params, common_good_fraction=common_good,
             common_geometric_coverage=float((np.asarray([f.geometric_coverage for f in frames])).min()),
             pair=cand, exact_gap_nm=gap_nm, exact_gap_over_bandwidth=gap_nm / mean_bw_nm, field_gap_nm=field_gap,
-            candidates_tried=tried, rejected=list(rejected), warnings=self._warnings(frames, common_good, gap_nm, mean_bw_nm, calibrations, field_gap) + [f"Detector excluded: {why}" for why in excluded.values()],
+            candidates_tried=tried, rejected=list(rejected), warnings=self._warnings(frames, common_good, gap_nm, mean_bw_nm, calibrations, field_gap) + position_notes + [f"Detector excluded: {why}" for why in excluded.values()],
             release=cand.a.obs.release, collection=s.irsa_collection,
         )
 

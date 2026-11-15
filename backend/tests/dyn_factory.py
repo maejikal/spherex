@@ -48,7 +48,12 @@ class FakeDetector:
     nan_box: tuple[int, int, int, int] | None = None
     variance_box: tuple[int, int, int, int] | None = None  # variance forced to 0 here
     calibration_id: str = CALIBRATION_ID
-    poison: bool = False  # IRSA "returns" garbage instead of FITS
+    crpix_full: tuple[float, float] | None = None  # full-image CRPIX (1-based); default is the geometric centre. Retry images differ.
+    retry: bool = False  # the archive serves these as `l2b_retry-v27-...` files
+    release: str = "l2b-v27-2026-198"
+    poison: bool = False
+    header_poison: bool = False
+    footprint_shift_px: tuple[float, float] = (0.0, 0.0)  # the archive's SIA polygon is wrong by this many pixels (metadata error)  # IRSA "returns" garbage instead of FITS
     wcs: WCS = field(init=False)
     data: np.ndarray = field(init=False)
     flags: np.ndarray = field(init=False)
@@ -71,15 +76,16 @@ class FakeDetector:
                 w.sip = Sip(a, b, None, None, w.wcs.crpix)
             return w
 
-        centre = ((self.n - 1) / 2, (self.n - 1) / 2)
-        anchor = build(self.target, (self.target_pixel[0] + 1, self.target_pixel[1] + 1), False)
-        crval = [float(v) for v in anchor.all_pix2world(*centre, 0)]
-        for _ in range(6):  # refine: a different tangent point shifts the target by a fraction of a pixel
-            w = build(crval, ((self.n + 1) / 2, (self.n + 1) / 2), self.sip)
+        # Like the real full images, CRPIX is the geometric centre by default; reprocessed "retry" images use another
+        # reference pixel. CRVAL is solved so the requested target lands on `target_pixel` for whichever CRPIX is used.
+        crpix = self.crpix_full or ((self.n + 1) / 2, (self.n + 1) / 2)
+        crval = list(self.target)
+        for _ in range(10):
+            w = build(crval, crpix, self.sip)
             got = [float(v) for v in w.all_world2pix(*self.target, 0)]
             err = (self.target_pixel[0] - got[0], self.target_pixel[1] - got[1])
-            crval = [float(v) for v in w.all_pix2world(centre[0] - err[0], centre[1] - err[1], 0)]
-        w = build(crval, ((self.n + 1) / 2, (self.n + 1) / 2), self.sip)
+            crval = [float(v) for v in w.all_pix2world(crpix[0] - 1 - err[0], crpix[1] - 1 - err[1], 0)]
+        w = build(crval, crpix, self.sip)
         self.wcs = w
         yy, xx = np.mgrid[0:self.n, 0:self.n].astype(float)
         img = np.full((self.n, self.n), self.background, dtype=np.float32)
@@ -103,9 +109,15 @@ class FakeDetector:
     # -- archive-side views ------------------------------------------------------------------------
     @property
     def corners_sky(self) -> np.ndarray:
-        px = np.array([[0, 0], [self.n - 1, 0], [self.n - 1, self.n - 1], [0, self.n - 1]], dtype=float)
+        px = np.array([[0, 0], [self.n - 1, 0], [self.n - 1, self.n - 1], [0, self.n - 1]], dtype=float) + np.array(self.footprint_shift_px)
         ra, dec = self.wcs.all_pix2world(px[:, 0], px[:, 1], 0)
         return np.column_stack((ra % 360, dec))
+
+    @property
+    def access_url(self) -> str:
+        folder = ("l2b_retry-" if self.retry else "l2b-") + self.release.split("l2b-")[-1]
+        suffix = f"spx_{folder}"
+        return f"{HOST}/ibe/data/spherex/dr1/level2/{self.obs_id[:9]}/{folder}/{self.detector}/level2_{self.obs_id}D{self.detector}_{suffix}.fits"
 
     def contains(self, ra: float, dec: float) -> bool:
         x, y = (float(v) for v in self.wcs.all_world2pix(ra, dec, 0))
@@ -123,6 +135,22 @@ class FakeDetector:
         return fits.BinTableHDU.from_columns(
             [fits.Column(name="X", format="9J", array=grid_x[None, :]), fits.Column(name="Y", format="14J", array=grid_y[None, :]),
              fits.Column(name="VALUES", format="252E", dim="(2,9,14)", array=values[None, ...])], name="WCS-WAVE")
+
+    def full_header(self) -> fits.Header:
+        header = self.wcs.to_header(relax=True)
+        header["BUNIT"], header["DETECTOR"], header["OBSID"] = "MJy / sr", self.detector, self.obs_id
+        header["RADESYS"] = "ICRS"
+        header["DATE-OBS"] = f"{_iso(self.mjd)}T01:00:00.000"
+        header["MJD-OBS"] = self.mjd
+        if self.retry:
+            header["WCSRETRY"] = True
+        img = fits.ImageHDU(np.zeros((1, 1), dtype=np.float32), header=header, name="IMAGE").header
+        img["NAXIS1"], img["NAXIS2"] = self.n, self.n
+        return img
+
+    def full_header_bytes(self) -> bytes:
+        """Start of a full FITS file: the (data-less) primary header, then the IMAGE header, both block padded."""
+        return fits.PrimaryHDU().header.tostring(padding=True).encode("latin-1") + self.full_header().tostring(padding=True).encode("latin-1")
 
     def cutout_bytes(self, ra: float, dec: float, size_deg: float) -> bytes:
         if self.poison:
@@ -164,6 +192,8 @@ class FakeArchive:
         self.detectors: dict[str, FakeDetector] = {}
         self.sia_requests: list[dict] = []
         self.downloads: list[tuple[str, float, float, float]] = []
+        self.header_requests: list[str] = []
+        self.header_status: list[int] = []  # popped one per header request before answering normally
         self.sia_status: list[int] = []  # popped one per SIA request before answering normally
         self.cutout_status: dict[str, list[int]] = {}
         self.duplicate_rows = True  # the real archive lists every observation twice
@@ -180,7 +210,7 @@ class FakeArchive:
                 continue
             region = "POLYGON ICRS " + " ".join(f"{v:.10f}" for v in d.corners_sky.ravel()) + f" {d.corners_sky[0, 0]:.10f} {d.corners_sky[0, 1]:.10f}"
             row = dict(s_ra=ra, s_dec=dec, energy_bandpassname=f"SPHEREx-D{d.detector}", obs_id=d.obs_id, em_min=1.6e-6, em_max=2.4e-6,
-                       access_url=f"{HOST}/ibe/data/spherex/dr1/level2/{d.obs_id[:9]}/l2b-v27-2026-198/{d.detector}/level2_{d.obs_id}D{d.detector}.fits",
+                       access_url=d.access_url,
                        s_region=region, s_xel1=d.n, s_xel2=d.n, s_pixel_scale=SCALE, t_min=d.mjd)
             rows.append(row)
             if self.duplicate_rows:
@@ -204,6 +234,20 @@ class FakeArchive:
         def ibe(request: httpx.Request) -> httpx.Response:
             url = urlparse(str(request.url))
             q = parse_qs(url.query)
+            if "center" not in q:  # a range request for the start of the full file: serve the headers
+                obs_id = next(o for o in self.detectors if f"level2_{o}D" in url.path)
+                self.header_requests.append(obs_id)
+                det = self.detectors[obs_id]
+                if self.header_status:
+                    status = self.header_status.pop(0)
+                    if status:
+                        return httpx.Response(status, text="unavailable")
+                if det.header_poison:
+                    return httpx.Response(200, content=b"not a fits file" * 100)
+                body = det.full_header_bytes()
+                rng = request.headers.get("range", "bytes=0-")
+                end = int(rng.split("-")[1]) if rng.split("-")[1] else len(body) - 1
+                return httpx.Response(206, content=body[: end + 1], headers={"content-range": f"bytes 0-{min(end, len(body) - 1)}/{len(body) * 1000}"})
             ra, dec = (float(v.rstrip("d")) for v in q["center"][0].split(","))
             size = float(q["size"][0])
             obs_id = next(o for o in self.detectors if f"level2_{o}D" in url.path)

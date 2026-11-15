@@ -6,6 +6,8 @@ import { getBlinkCutouts, getBlinkModes, getDynamicBlink } from '../api/client.t
 import type { BlinkAnalysis, BlinkFrame, BlinkMode, BlinkModes } from '../api/types.ts';
 import { BLINK_COVERED_REGION, BLINK_CUTOUT_SIZE, BLINK_DISCLAIMER, BLINK_DYNAMIC_FOV_DEG } from '../sky/blink/config.ts';
 import { blinkQueryKey, modeLabel, resolveBlinkMode } from '../sky/blink/mode.ts';
+import { clockView } from '../sky/blink/timing.ts';
+import { useLoadingRun } from './useLoadingRun.ts';
 import { describeBlinkError } from '../sky/blink/errors.ts';
 import {
   activeTimer,
@@ -42,6 +44,9 @@ export function BlinkViewer({ target, mode, onModeChange, onGoToCoveredRegion }:
     staleTime: 5 * 60_000,
     retry: false,
   });
+
+  const loading = Boolean(target) && !query.data && query.isFetching;
+  const run = useLoadingRun({ loading, succeeded: Boolean(query.data), mode: active, requestKey: `${active}|${target?.ra}|${target?.dec}` });
 
   if (!target) {
     return <div className="blink-panel"><p className="blink-note">Select a position and choose Analyze area to compare SPHEREx observations.</p></div>;
@@ -94,10 +99,35 @@ export function BlinkViewer({ target, mode, onModeChange, onGoToCoveredRegion }:
       <div className="blink-stage blink-stage--loading" role="status" aria-live="polite">
         <LoaderCircle className="spin" aria-hidden="true" size={26} />
         <p>{active === 'dynamic' ? 'Searching NASA/IPAC for wavelength-matched SPHEREx observations…' : 'Preparing aligned SPHEREx observations…'}</p>
-        {active === 'dynamic' && <p className="blink-position">Downloads small FITS cutouts; a new field can take up to a minute.</p>}
+        {run && <LoadingClock key={run.startedAt} startedAt={run.startedAt} estimateMs={run.estimateMs} mode={run.mode} />}
+        {active === 'dynamic' && <p className="blink-position">Downloads small FITS cutouts; a new field can take a minute or more.</p>}
         <p className="blink-position">{position}</p>
       </div>
       <p className="blink-note">{BLINK_DISCLAIMER}</p>
+    </div>
+  );
+}
+
+/** Elapsed time from a monotonic clock (not a counter), refreshed every second; the estimated total is fixed per request. */
+function LoadingClock({ startedAt, estimateMs, mode }: { startedAt: number; estimateMs: number | null; mode: BlinkMode }) {
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    const refresh = () => setNow(performance.now());
+    refresh();
+    const timer = window.setInterval(refresh, 1000);
+    document.addEventListener('visibilitychange', refresh); // a throttled or suspended tab catches up immediately
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [startedAt]);
+  const view = clockView(now - startedAt, estimateMs, mode);
+  return (
+    <div className={`blink-clock${view.overrun ? ' blink-clock--overrun' : ''}`} role="timer" aria-label={`Elapsed ${view.elapsed}`}>
+      <span className="blink-clock__time">{view.elapsed}{view.estimate && <span className="blink-clock__estimate"> / {view.estimate}</span>}</span>
+      <span className="blink-clock__caption">{view.caption}</span>
+      {/* Announced politely, and only when a new threshold is reached (the text changes at most four times). */}
+      <span className="blink-clock__note" role="status" aria-live="polite" data-level={view.noteLevel}>{view.note}</span>
     </div>
   );
 }

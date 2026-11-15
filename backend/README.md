@@ -37,7 +37,7 @@ Configuration is via `SKY_*` environment variables or `backend/.env` (see `.env.
 Errors always use `{"error": {"code", "message"}}`: `invalid_parameters` (422), `unsupported_survey` (400), `object_not_found` (404), `upstream_timeout` (504),
 `upstream_unavailable` / `upstream_invalid_response` / `catalogue_unavailable` (502), `internal_error` (500), `not_found` (404),
 `no_fits_coverage` (404), `fits_unavailable` (503), `fits_processing_error` (500). Archive mode adds the 404 reasons
-`no_observations`, `insufficient_coverage`, `wavelength_mismatch`, `invalid_calibration` and `quality_failure` (the viewer shows the message), and
+`no_observations`, `insufficient_coverage`, `wavelength_mismatch`, `invalid_calibration` (the calibration table is unavailable), `coordinate_mapping_failed` (detector coordinates could not be verified), `footprint_mismatch` and `quality_failure` (the viewer shows the message), and
 reports an unreachable archive as `upstream_unavailable` (502) / `upstream_timeout` (504).
 
 ## Removed in the SPHEREx migration
@@ -152,10 +152,14 @@ selects pairs by wavelength and re-checks the exact wavelength from the download
 4. **Ranking.** Cross-epoch, same-detector pairs, deterministic: wavelength gap relative to the bandwidth, bandwidth match, detector-edge margin, epoch
    separation, rotation closest to north-up, observation ids. The wavelength spread *across the field* is checked as well as at the target.
 5. **Verification (best candidate first, up to `SKY_TOP_PAIRS_TO_TRY`).** Cutouts (1.5x the field, `center=ra,dec d&size=`) are downloaded, validated and cached atomically.
-   Cutout pixel positions are converted to full-detector positions (`x_full = x_local + CRPIX_full - CRPIX_cutout`, with `CRPIX_full = (detector size + 1) / 2`
-   from the archive's `s_xel`, **not** a constant) before the calibration lookup, and cross-checked against the metadata prediction (`SKY_MAX_POSITION_ERROR_PX`);
-   a mismatch rejects the candidate. Then: exact wavelength/bandwidth gap, geometric coverage, common good-quality coverage. A failing pair falls through to the next one;
-   if none passes, the error reason says why. Nothing is ever substituted from another source.
+   Cutout pixel positions are converted to full-detector positions (`x_full = x_local + CRPIX_full - CRPIX_cutout`) before the calibration lookup. **`CRPIX_full`
+   is read from each file's own full-image header** (a small HTTP range request for the first ~25 KB, cached on disk), because it is *not* always the detector centre:
+   reprocessed `l2b_retry-...` images (`WCSRETRY = T`) and a few others use another reference pixel (e.g. (1017.2, 905.4)), and assuming (n+1)/2 put the target 115-900 px
+   from its true position (about 8 % of the observations in a real test field). The mapping is verified: detector size/number match the metadata, the crop origin is a whole
+   number of pixels, the cutout WCS and the full-image WCS agree to 0.05 arcsec at the mapped pixels, and the cutout-derived position equals the one from the full WCS.
+   The SIA-polygon prediction is then only a cross-check: a gap above `SKY_MAX_POSITION_ERROR_PX` (25) is reported as a warning (the verified header position is used), above
+   `SKY_MAX_FOOTPRINT_ERROR_PX` (400) the observation is rejected as `footprint_mismatch`. Then: exact wavelength/bandwidth gap, geometric coverage, common good-quality coverage. A failing pair falls through to the next one (an observation that failed is
+   remembered and never fetched again; when the failures are geometry/metadata problems the shortlist is extended up to `SKY_MAX_PAIRS_TO_TRY`); if none passes, the error reason says why. Nothing is ever substituted from another source.
 6. **Reprojection** reuses the tested mask-aware bilinear resampler (SIP-aware `all_world2pix`) onto one shared TAN grid (odd size, target on the centre pixel, optional rotation).
    Hard-invalid pixels (OVERFLOW, SUR_ERROR, NONFUNC, MISSING_DATA, HOT, COLD, NONLINEAR, STREAK, BLOOM, SNOWBALL, non-finite or non-positive variance) are excluded; caution flags
    (TRANSIENT, PERSIST, OUTLIER, HALO) are kept and reported; **SOURCE and FULLSAMPLE are never masked**. Flag bitmasks are sampled nearest-neighbour, never interpolated.

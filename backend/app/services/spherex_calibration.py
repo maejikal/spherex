@@ -97,12 +97,13 @@ def calibration_from_hdul(hdul: fits.HDUList, *, expected_detector: str | None =
 
 
 def full_frame_offset(cutout_header: fits.Header, full_nx: int, full_ny: int) -> tuple[float, float]:
-    """(dx, dy) to add to a zero-based cutout-local pixel position to get the zero-based full-image position.
+    """(dx, dy) to add to a zero-based cutout-local pixel position to get the zero-based full-image position,
+    **assuming the full image's CRPIX is its geometric centre** ((n+1)/2, 1020.5 for 2040 pixels).
 
-    IRSA cutouts keep the full image's sky solution but shift ``CRPIX``. The full image's ``CRPIX`` is its
-    geometric centre ((n+1)/2, 1020.5 for a 2040-pixel detector); it is derived from the archive-reported
-    detector size rather than hard-coded, and callers must still cross-check the result against an
-    independent position estimate (see ``dynamic_blink``).
+    That holds for most SPHEREx images but NOT all: reprocessed "retry" images (``WCSRETRY = T``) have a
+    different reference pixel, e.g. (1017.2, 905.4). A cutout does not record the original CRPIX, so this
+    assumption is only a fallback; the pipeline uses :func:`header_frame_offset` with the archive's own full
+    header instead.
     """
     for key in ("CRPIX1", "CRPIX2"):
         if not isinstance(cutout_header.get(key), (int, float)):
@@ -110,6 +111,22 @@ def full_frame_offset(cutout_header: fits.Header, full_nx: int, full_ny: int) ->
     if full_nx < 2 or full_ny < 2:
         raise CalibrationError("unknown full-detector size")
     return (full_nx + 1) / 2.0 - float(cutout_header["CRPIX1"]), (full_ny + 1) / 2.0 - float(cutout_header["CRPIX2"])
+
+
+def header_frame_offset(cutout_header: fits.Header, full_header: fits.Header, tolerance: float = 1e-3) -> tuple[float, float]:
+    """(dx, dy) between a cutout's pixels and the full image's, from the full image's *actual* CRPIX.
+
+    ``dx = CRPIX_full - CRPIX_cutout``. The result must be an integer (the crop origin); otherwise the two
+    headers do not describe the same image and the mapping is rejected.
+    """
+    try:
+        dx = float(full_header["CRPIX1"]) - float(cutout_header["CRPIX1"])
+        dy = float(full_header["CRPIX2"]) - float(cutout_header["CRPIX2"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CalibrationError(f"missing CRPIX in a header ({exc})") from exc
+    if not (np.isfinite(dx) and np.isfinite(dy)) or abs(dx - round(dx)) > tolerance or abs(dy - round(dy)) > tolerance:
+        raise CalibrationError(f"cutout offset ({dx:.3f}, {dy:.3f}) is not a whole-pixel crop origin")
+    return float(round(dx)), float(round(dy))
 
 
 class CalibrationRegistry:

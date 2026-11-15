@@ -69,11 +69,16 @@ class DynamicSelectionError(AppError):
     """No scientifically suitable observation pair could be built for the requested field.
 
     ``reason`` becomes the machine-readable code so the viewer can explain *why*: ``no_observations``,
-    ``insufficient_coverage``, ``wavelength_mismatch``, ``invalid_calibration`` or ``quality_failure``.
+    ``insufficient_coverage``, ``wavelength_mismatch``, ``invalid_calibration`` (calibration table unavailable),
+    ``quality_failure``, ``coordinate_mapping_failed`` (detector coordinates could not be verified) or ``footprint_mismatch``
+    (the archive footprint contradicts the exact position).
     """
 
     status_code = 404
-    REASONS = ("no_observations", "insufficient_coverage", "wavelength_mismatch", "invalid_calibration", "quality_failure")
+    REASONS = (
+        "no_observations", "insufficient_coverage", "wavelength_mismatch", "invalid_calibration", "quality_failure",
+        "coordinate_mapping_failed", "footprint_mismatch",
+    )
 
     def __init__(self, message: str, reason: str) -> None:
         super().__init__(message)

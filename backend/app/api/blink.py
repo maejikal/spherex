@@ -113,6 +113,8 @@ def _dynamic_response(result: DynamicResult, settings) -> DynamicBlinkResponse: 
             wavelength_um=WavelengthRange(min=float(valid_wl.min()), max=float(valid_wl.max()), mean=f.centre_wavelength_um) if valid_wl.size else None,
             background_mjy_sr=background, unit="MJy / sr", bandwidth_um=f.centre_bandwidth_um, geometric_coverage=round(f.geometric_coverage, 4),
             suspect_fraction=round(f.suspect_fraction, 4), source_fraction=round(f.source_fraction, 4), calibration_version=f.cutout.calibration.version,
+            detector_position=[round(v, 2) for v in f.centre_xy], full_image_crpix=list(f.mapping.full_crpix) if f.mapping else None,
+            footprint_error_px=round(f.mapping.prediction_error_px, 1) if f.mapping else None,
         ))
     pair = result.pair
     return DynamicBlinkResponse(

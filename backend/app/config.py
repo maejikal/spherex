@@ -109,7 +109,9 @@ class Settings(BaseSettings):
     # Exact-verification limits.
     min_geometric_coverage: float = Field(default=0.98, gt=0, le=1)
     min_common_good_fraction: float = Field(default=0.85, gt=0, le=1)
-    max_position_error_px: float = 25.0     # predicted (SIA polygon) vs exact (cutout WCS) detector position
+    max_position_error_px: float = 25.0     # SIA-polygon prediction vs exact detector position: a larger gap is reported as a warning
+    max_footprint_error_px: float = 400.0   # ...and a gap this large (about 0.7 deg) rejects the observation: the footprint or WCS is wrong
+    max_pairs_to_try: int = Field(default=12, ge=1, le=40)  # shortlist is extended to this many when failures are metadata/geometry problems
     dynamic_interp_min_weight: float = Field(default=0.99, gt=0, le=1)
     dynamic_result_cache_entries: int = Field(default=12, ge=1)
 

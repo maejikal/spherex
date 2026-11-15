@@ -41,10 +41,34 @@ MAX_SIA_BYTES = 25 * 1024 * 1024
 PROCESSING_VERSION = "1"  # bump to invalidate cached cutouts if how they are requested/validated changes
 SIA_RADIUS_DEG = 0.001
 REQUIRED_EXTENSIONS = ("IMAGE", "FLAGS", "VARIANCE", "WCS-WAVE")
+HEADER_RANGE_SIZES = (96 * 1024, 512 * 1024)  # bytes requested from the start of a full file; the IMAGE header is ~25 KB
+_BLOCK, _CARD = 2880, 80
 
 
 class CutoutCorrupt(ValueError):
     """A downloaded file is not a usable SPHEREx cutout."""
+
+
+class HeaderIncomplete(ValueError):
+    """The bytes received do not yet contain the whole IMAGE header."""
+
+
+def parse_image_header(data: bytes) -> fits.Header:
+    """The IMAGE (second HDU) header from the first bytes of a SPHEREx FITS file (primary HDU has no data)."""
+    text = data.decode("latin-1")
+    cards = [text[i : i + _CARD] for i in range(0, len(text) - _CARD + 1, _CARD)]
+    per_block = _BLOCK // _CARD
+    first_end = next((i for i, c in enumerate(cards) if c.startswith("END     ")), None)
+    if first_end is None or not cards[0].startswith("SIMPLE"):
+        raise HeaderIncomplete("not the start of a FITS file")
+    start = -(-(first_end + 1) // per_block) * per_block  # the next header begins on a block boundary
+    second_end = next((i for i in range(start, len(cards)) if cards[i].startswith("END     ")), None)
+    if second_end is None:
+        raise HeaderIncomplete("IMAGE header continues past the bytes received")
+    header = fits.Header.fromstring("".join(cards[start : second_end + 1]), sep="")
+    if str(header.get("XTENSION", "")).strip() != "IMAGE" or header.get("NAXIS") != 2:
+        raise CutoutCorrupt("second HDU is not a two-dimensional IMAGE")
+    return header
 
 
 def _with_retries(operation: Callable[[], T], *, retries: int, backoff: float, sleep: Callable[[float], None], what: str) -> T:
@@ -150,6 +174,33 @@ class IrsaClient:
             log.info("SIA: %d record problem(s), first: %s", len(problems), problems[0])
         return kept, problems
 
+    # -- headers ----------------------------------------------------------------------------------
+    def read_prefix(self, url: str, size: int) -> bytes:
+        """The first ``size`` bytes of a file (HTTP Range; if the server ignores it, the stream is simply cut short)."""
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or (parsed.hostname or "").lower() not in {h.lower() for h in self._s.irsa_allowed_hosts}:
+            raise UpstreamInvalidResponse("Refusing to read from a host that is not on the IRSA allow-list.")
+        timeout = httpx.Timeout(connect=self._s.irsa_connect_timeout, read=self._s.irsa_sia_read_timeout, write=10.0, pool=10.0)
+
+        def once() -> bytes:
+            with self._client.stream("GET", url, headers={"Range": f"bytes=0-{size - 1}"}, timeout=timeout) as response:
+                if response.status_code in RETRY_STATUS:
+                    raise _Retryable(response.status_code)
+                if response.status_code not in (200, 206):
+                    raise UpstreamInvalidResponse(f"IRSA returned HTTP {response.status_code} for the file header.")
+                chunks, got = [], 0
+                for chunk in response.iter_bytes(1 << 15):
+                    chunks.append(chunk)
+                    got += len(chunk)
+                    if got >= size:
+                        break
+                return b"".join(chunks)[:size]
+
+        return _with_retries(once, retries=self._s.irsa_max_retries, backoff=self._s.irsa_backoff_base, sleep=self._sleep, what="the FITS header request")
+
+    def fetch_image_header(self, url: str) -> fits.Header:
+        return _fetch_header_once(self, url.split("?")[0])
+
     # -- downloads --------------------------------------------------------------------------------
     def download(self, url: str, destination: Path) -> None:
         """Stream ``url`` to ``destination`` (restricted to the allow-listed IRSA hosts, size-capped)."""
@@ -173,6 +224,16 @@ class IrsaClient:
                         fh.write(chunk)
 
         _with_retries(once, retries=self._s.irsa_max_retries, backoff=self._s.irsa_backoff_base, sleep=self._sleep, what="the FITS download")
+
+
+def _fetch_header_once(irsa: "IrsaClient", url: str) -> fits.Header:
+    for size in HEADER_RANGE_SIZES:
+        data = irsa.read_prefix(url, size)
+        try:
+            return parse_image_header(data)
+        except HeaderIncomplete:
+            continue
+    raise UpstreamInvalidResponse("Could not read the archive FITS header.")
 
 
 def validate_cutout(path: Path) -> None:
@@ -273,3 +334,58 @@ class CutoutStore:
                     total -= size
         except OSError as exc:
             log.warning("cutout cache eviction failed: %s", exc)
+
+
+class FullHeaderStore:
+    """The IMAGE header of each *full* detector image, fetched with a small HTTP range request and cached.
+
+    It supplies what a cutout does not record: the original CRPIX and WCS (which differ between normal and
+    reprocessed "retry" images), so cutout pixels can be mapped to the full-detector coordinates the
+    wavelength calibration is defined in.
+    """
+
+    def __init__(self, settings: Settings, irsa: IrsaClient) -> None:
+        self._irsa = irsa
+        self._dir = Path(settings.blink_cache_dir).expanduser() / "headers"
+        self._memory: dict[str, fits.Header] = {}
+        self._lock = threading.Lock()
+        self._gates: dict[str, threading.Lock] = {}
+
+    def _path(self, url: str) -> Path:
+        return self._dir / f"{hashlib.sha256(url.split('?')[0].encode()).hexdigest()[:32]}.hdr"
+
+    def get(self, obs: SiaObservation) -> fits.Header:
+        url = obs.access_url.split("?")[0]
+        with self._lock:
+            hit = self._memory.get(url)
+            gate = self._gates.setdefault(url, threading.Lock())
+        if hit is not None:
+            return hit.copy()
+        with gate:
+            with self._lock:
+                hit = self._memory.get(url)
+            if hit is None:
+                hit = self._read_disk(url) or self._fetch_and_store(url)
+                with self._lock:
+                    self._memory[url] = hit
+        return hit.copy()
+
+    def _read_disk(self, url: str) -> fits.Header | None:
+        path = self._path(url)
+        try:
+            header = fits.Header.fromstring(path.read_text(encoding="latin-1"), sep="\n")
+            return header if header.get("NAXIS") == 2 and "CRPIX1" in header else None
+        except (OSError, ValueError):
+            return None
+
+    def _fetch_and_store(self, url: str) -> fits.Header:
+        header = self._irsa.fetch_image_header(url)
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            path = self._path(url)
+            tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.part")
+            tmp.write_text(header.tostring(sep="\n"), encoding="latin-1")
+            os.replace(tmp, path)
+        except OSError as exc:
+            log.warning("could not cache header: %s", exc)
+        return header

@@ -324,6 +324,8 @@ test('each archive failure reason gets its own explanation and only transient on
     insufficient_coverage: ['insufficient-coverage', false],
     wavelength_mismatch: ['wavelength-mismatch', false],
     invalid_calibration: ['invalid-calibration', true],
+    coordinate_mapping_failed: ['coordinate-mapping', false],
+    footprint_mismatch: ['footprint-mismatch', false],
     quality_failure: ['quality-failure', false],
     upstream_unavailable: ['archive-unavailable', true],
     upstream_timeout: ['archive-unavailable', true],
@@ -334,4 +336,16 @@ test('each archive failure reason gets its own explanation and only transient on
     assert.equal(view.retryable, retryable, code);
     assert.equal(view.message, `m-${code}`); // the backend's own explanation is shown unchanged
   }
+});
+
+test('a failed position check is never described as a calibration problem', () => {
+  const mapping = describeBlinkError({ message: 'the detector coordinates of the observations could not be verified', code: 'coordinate_mapping_failed', status: 404 });
+  const footprint = describeBlinkError({ message: 'the archive footprint contradicts the observations', code: 'footprint_mismatch', status: 404 });
+  const calibration = describeBlinkError({ message: 'the wavelength calibration table was unavailable', code: 'invalid_calibration', status: 404 });
+  assert.equal(calibration.title, 'Wavelength calibration unavailable');
+  for (const view of [mapping, footprint]) {
+    assert.notEqual(view.title, calibration.title);
+    assert.doesNotMatch(view.title, /calibration/i);
+  }
+  assert.equal(new Set([mapping.title, footprint.title, calibration.title]).size, 3);
 });

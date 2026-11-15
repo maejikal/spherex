@@ -20,14 +20,15 @@ from PIL import Image
 
 from app.config import Settings
 from app.models.errors import DynamicSelectionError, InvalidParameters, UpstreamInvalidResponse, UpstreamTimeout, UpstreamUnavailable
-from app.services.dynamic_blink import DynamicBlinkService, _Reject, load_cutout, resolve_flag_masks
+from app.services.dynamic_blink import DynamicBlinkService, _Reject, establish_mapping, load_cutout, resolve_flag_masks
 from app.services.fits_cutout import build_output_wcs
-from app.services.irsa_archive import CutoutStore, IrsaClient, validate_cutout
+from app.services.irsa_archive import CutoutStore, FullHeaderStore, IrsaClient, parse_image_header, validate_cutout
 from app.services.pair_selection import (
     Prediction, SiaRecordError, Settings as PairSettings, fit_detector_map, field_frame, group_epochs, observations_from_table,
     output_size_pixels, parse_polygon, predict, rank_pairs,
 )
-from app.services.spherex_calibration import CalibrationError, CalibrationRegistry, calibration_from_hdul, full_frame_offset
+from app.services.irsa_archive import HeaderIncomplete
+from app.services.spherex_calibration import CalibrationError, CalibrationRegistry, calibration_from_hdul, full_frame_offset, header_frame_offset
 from dyn_factory import FLAG_BITS, SCALE, FakeArchive, FakeDetector
 from fits_factory import offset_sky
 
@@ -56,7 +57,8 @@ class Stack:
         self.irsa = IrsaClient(cfg, sleep=lambda _s: None)
         self.store = CutoutStore(cfg, self.irsa)
         self.registry = CalibrationRegistry(cfg.blink_cache_dir / "calibration")
-        self.service = DynamicBlinkService(cfg, self.irsa, self.store, self.registry)
+        self.headers = FullHeaderStore(cfg, self.irsa)
+        self.service = DynamicBlinkService(cfg, self.irsa, self.store, self.registry, self.headers)
 
 
 @pytest.fixture
@@ -540,7 +542,7 @@ def test_invalid_pixels_do_not_contaminate_and_variance_is_validated(archive, st
     from app.services.dynamic_blink import resample_cutout
     poisoned = type(cut)(**{**cut.__dict__, "data": np.where(np.isfinite(cut.data) & (cut.variance <= 0), 1e9, cut.data).astype(np.float32)})
     r = analyse(stack)
-    again = resample_cutout(poisoned, build_output_wcs(*T, N_OUT, SCALE), *__import__("app.services.fits_cutout", fromlist=["x"]).output_sky_grid(build_output_wcs(*T, N_OUT, SCALE), N_OUT), *T, r.pair.a, stack.cfg)
+    again = resample_cutout(poisoned, build_output_wcs(*T, N_OUT, SCALE), *__import__("app.services.fits_cutout", fromlist=["x"]).output_sky_grid(build_output_wcs(*T, N_OUT, SCALE), N_OUT), *T, a.mapping, stack.cfg)
     assert np.array_equal(again.valid, a.valid) and np.array_equal(again.values[a.valid], a.values[a.valid])
 
 
@@ -616,7 +618,7 @@ def test_detector_position_cross_check_rejects_wrong_geometry(archive, stack):
     stack.service._verify_and_build(cand, *T, FOV, 1, [], {"D3": stack.registry.current("D3")}, {})  # sanity: consistent metadata passes
     with pytest.raises(_Reject) as err:
         stack.service._verify_and_build(cand_wrong, *T, FOV, 1, [], {"D3": stack.registry.current("D3")}, {})
-    assert err.value.reason == "invalid_calibration" and "differs from the SIA prediction" in err.value.detail
+    assert err.value.reason == "coordinate_mapping_failed" and "archive lists 1000x1000" in err.value.detail
 
 
 def test_calibration_changes_between_releases_are_noticed(archive, stack):
@@ -651,6 +653,251 @@ def test_output_grid_rotation_matches_the_wcs(archive):
         assert sep == pytest.approx(SCALE, abs=0.01)
     assert np.allclose(build_output_wcs(*T, 59, SCALE).wcs.get_pc() @ np.diag(build_output_wcs(*T, 59, SCALE).wcs.cdelt),
                        build_output_wcs(*T, 59, SCALE, rotation_deg=0).wcs.get_pc() @ np.diag(build_output_wcs(*T, 59, SCALE, rotation_deg=0).wcs.cdelt))
+
+
+# ===================================================================================== detector mapping regressions
+# Background: reprocessed "retry" images (WCSRETRY = T) have a full-image CRPIX that is NOT the detector centre
+# (real example: (1017.2, 905.4) instead of (1020.5, 1020.5)). A cutout does not record the original CRPIX, so assuming the
+# centre placed the target 115-125 px away from where the SIA footprint (and the file's own full WCS) put it.
+
+OFF_CENTRE = [None, (150.5, 200.5), (200.5, 90.0), (120.2, 260.8)]
+
+
+@pytest.mark.parametrize("roll", [0.0, 90.0, 180.0, 37.0])
+@pytest.mark.parametrize("crpix", OFF_CENTRE)
+def test_exact_position_and_wavelength_hold_for_any_orientation_and_crpix_convention(archive, stack, roll, crpix):
+    may = archive.add(obs_id="2025W31_2A_0404_3", detector=3, mjd=MAY, target=T, target_pixel=(190.0, 190.0), roll=roll, crpix_full=crpix, sources=STARS)
+    dec = archive.add(obs_id="2026W09_2A_0483_3", detector=3, mjd=DEC_MJD, target=T, target_pixel=(200.0, 196.0), roll=(roll + 180) % 360, crpix_full=crpix, sources=STARS, retry=crpix is not None)
+    r = analyse(stack)
+    a, b = r.frames
+    assert a.centre_xy == pytest.approx((190.0, 190.0), abs=0.05) and b.centre_xy == pytest.approx((200.0, 196.0), abs=0.05)  # true detector positions
+    assert a.centre_wavelength_um == pytest.approx(may.true_wavelength_at(190, 190), abs=1e-4)
+    assert b.centre_wavelength_um == pytest.approx(dec.true_wavelength_at(200, 196), abs=1e-4)
+    assert b.mapping.full_crpix == pytest.approx(crpix or (200.5, 200.5))
+    assert not any("footprint metadata" in w for w in r.warnings)  # the SIA prediction was within tolerance throughout
+
+
+def test_the_centre_crpix_assumption_would_have_failed_on_a_retry_image(archive, stack):
+    """The exact failure from production, reproduced: the old conversion lands >100 px from the truth; the header-based one does not."""
+    standard_pair(archive, dec_extra=dict(crpix_full=(197.2, 105.4), retry=True))
+    o = next(x for x in stack.irsa.search(*T)[0] if x.obs_id == "2025W51_1A_02_3")
+    assert o.release == "l2b_retry-v27-2026-198"  # the reprocessed file name is parsed (it used to be 'unknown')
+    dec = archive.detectors[o.obs_id]
+    path = stack.store.get(o, *T, FOV)
+    with fits.open(path) as h:
+        hdr = h["IMAGE"].header
+        from astropy.wcs import WCS
+        xl, yl = (float(v) for v in WCS(hdr).all_world2pix(*T, 0))
+    dx, dy = full_frame_offset(hdr, 400, 400)   # assumes CRPIX_full = centre: the old behaviour
+    assert math.hypot(xl + dx - 190.0, yl + dy - 186.0) > 90  # ~95 px off here (115 px on the real 2040-pixel image)
+    assert abs(dy - round(dy)) > 0.01 or abs(dx - round(dx)) > 0.01  # and the crop origin it implies is not even a whole pixel: a tell-tale
+    full = stack.headers.get(o)
+    hx, hy = header_frame_offset(hdr, full)
+    assert (xl + hx, yl + hy) == pytest.approx((190.0, 186.0), abs=0.05)
+    r = analyse(stack)
+    assert r.frames[1].mapping.full_crpix == pytest.approx((197.2, 105.4)) and r.exact_gap_nm == pytest.approx(r.pair.gap_nm, abs=6)
+
+
+def test_replica_of_the_production_failure_on_a_full_size_detector(archive, stack):
+    """2026W09_2A_0483_3 (D3 retry): CRPIX (1017.2, 905.4) on a 2040 x 2040 image, target at (1266.4, 366.3)."""
+    big = dict(n=2040, background=0.15)
+    archive.add(obs_id="2025W32_1A_0076_1", detector=3, mjd=MAY, target=T, target_pixel=(1737.0, 378.0), roll=-30.0, **big)
+    retry = archive.add(obs_id="2026W09_2A_0483_3", detector=3, mjd=DEC_MJD, target=T, target_pixel=(1266.44, 366.26), roll=150.0,
+                        crpix_full=(1017.2, 905.4), retry=True, release="l2b-v27-2026-229", **big)
+    r = analyse(stack)
+    frame = r.frames[1]
+    assert frame.cutout.obs.obs_id == "2026W09_2A_0483_3" and frame.centre_xy == pytest.approx((1266.44, 366.26), abs=0.05)
+    assert frame.mapping.prediction_error_px < 25 and frame.mapping.full_crpix == pytest.approx((1017.2, 905.4))
+    assert frame.centre_wavelength_um == pytest.approx(retry.true_wavelength_at(1266.44, 366.26), abs=1e-4)
+    assert frame.mapping.dy == pytest.approx(1017.2 * 0 + 905.4 - frame.cutout.header["CRPIX2"])
+    centre_dy = 1020.5 - frame.cutout.header["CRPIX2"]
+    assert abs(centre_dy - frame.mapping.dy) > 100  # what the centre assumption would have got wrong
+
+
+def test_2025_and_2026_releases_and_retry_file_names(archive, stack):
+    standard_pair(archive, may_extra=dict(release="l2b-v27-2026-225"), dec_extra=dict(release="l2b-v27-2026-229", crpix_full=(150.0, 120.0), retry=True))
+    obs = {o.obs_id: o for o in stack.irsa.search(*T)[0]}
+    assert obs["2025W20_2D_01_3"].release == "l2b-v27-2026-225" and obs["2025W51_1A_02_3"].release == "l2b_retry-v27-2026-229"
+    r = analyse(stack)
+    assert r.release == "l2b-v27-2026-225" and r.frames[1].cutout.obs.release == "l2b_retry-v27-2026-229"
+    assert r.frames[0].mapping.full_crpix == pytest.approx((200.5, 200.5)) and r.frames[1].mapping.full_crpix == pytest.approx((150.0, 120.0))  # per-file conventions, never shared
+
+
+def test_header_offset_must_be_a_whole_pixel_crop_origin(archive):
+    det = archive.add(obs_id="W1_2D_0001_3", detector=3, mjd=MAY, target=T, target_pixel=(250.0, 310.0), crpix_full=(190.3, 150.9))
+    with fits.open(io.BytesIO(det.cutout_bytes(*T, 0.1))) as h:
+        cut = h["IMAGE"].header
+    full = det.full_header()
+    dx, dy = header_frame_offset(cut, full)
+    assert dx == round(dx) and dy == round(dy)
+    bad = full.copy(); bad["CRPIX1"] = float(bad["CRPIX1"]) + 0.5
+    with pytest.raises(CalibrationError, match="whole-pixel crop origin"):
+        header_frame_offset(cut, bad)
+    missing = full.copy(); del missing["CRPIX2"]
+    with pytest.raises(CalibrationError, match="missing CRPIX"):
+        header_frame_offset(cut, missing)
+
+
+def mapping_case(archive, tmp_path, **kw):
+    det = archive.add(obs_id="W1_2D_0001_3", detector=3, mjd=MAY, target=T, target_pixel=(250.0, 310.0), **kw)
+    path = tmp_path / "c.fits"
+    path.write_bytes(det.cutout_bytes(*T, 0.1))
+    obs = make_obs(det, archive)
+    cfg = Settings(_env_file=None)
+    pred = predict(obs, *T, FOV, SCALE, 20.0, None)
+    return det, load_cutout(path, obs), pred, cfg
+
+
+def test_mapping_rejects_headers_that_disagree_with_the_cutout(archive, tmp_path):
+    det, cut, pred, cfg = mapping_case(archive, tmp_path, crpix_full=(190.3, 150.9))
+    ok = establish_mapping(cut, pred, det.full_header(), *T, cfg)
+    assert ok.exact_xy == pytest.approx((250.0, 310.0), abs=0.05) and ok.prediction_error_px < 10
+    shifted = det.full_header(); shifted["CRVAL1"] = float(shifted["CRVAL1"]) + 5e-4  # full WCS no longer the cutout's parent
+    with pytest.raises(_Reject, match="disagree") as err:
+        establish_mapping(cut, pred, shifted, *T, cfg)
+    assert err.value.reason == "coordinate_mapping_failed" and err.value.obs == ("W1_2D_0001_3", "D3")
+    wrong_size = det.full_header(); wrong_size["NAXIS1"] = 1000
+    with pytest.raises(_Reject, match="archive lists"):
+        establish_mapping(cut, pred, wrong_size, *T, cfg)
+    wrong_det = det.full_header(); wrong_det["DETECTOR"] = 4
+    with pytest.raises(_Reject, match="full header is detector 4"):
+        establish_mapping(cut, pred, wrong_det, *T, cfg)
+    off_by_crop = det.full_header(); off_by_crop["CRPIX1"] = float(off_by_crop["CRPIX1"]) + 0.5
+    with pytest.raises(_Reject, match="whole-pixel"):
+        establish_mapping(cut, pred, off_by_crop, *T, cfg)
+
+
+def test_footprint_prediction_error_is_a_warning_when_the_exact_position_is_verified(archive, stack):
+    """SIA polygon wrong by 60 px, but the file's own header is self-consistent: the verified position is used, with a warning."""
+    standard_pair(archive, dec_extra=dict(footprint_shift_px=(0.0, 60.0)))
+    r = analyse(stack)
+    assert r.frames[1].centre_xy == pytest.approx((190.0, 186.0), abs=0.05) and r.frames[1].mapping.prediction_error_px > 40
+    assert any("footprint metadata" in w and "verified header position was used" in w for w in r.warnings)
+    assert r.frames[1].centre_wavelength_um == pytest.approx(archive.detectors["2025W51_1A_02_3"].true_wavelength_at(190, 186), abs=1e-4)
+
+
+def test_footprint_prediction_error_beyond_the_hard_limit_is_rejected_with_its_own_reason(archive, cfg):
+    stack = Stack(cfg.model_copy(update={"max_footprint_error_px": 60.0}))
+    try:
+        standard_pair(archive, dec_extra=dict(footprint_shift_px=(100.0, 0.0)))
+        with pytest.raises(DynamicSelectionError) as err:
+            stack.service.analyse(*T, FOV)
+        assert err.value.code == "footprint_mismatch"
+        assert "footprint metadata contradicts" in err.value.message and "px" not in err.value.message  # concise: numbers stay in the log
+    finally:
+        stack.irsa.close()
+
+
+def test_unreadable_archive_header_is_a_coordinate_mapping_failure_not_a_calibration_failure(archive, stack):
+    standard_pair(archive, dec_extra=dict(header_poison=True))
+    with pytest.raises(DynamicSelectionError) as err:
+        analyse(stack)
+    assert err.value.code == "coordinate_mapping_failed" and "calibration" not in err.value.message.lower().replace("wavelength", "")
+    assert "could not be verified" in err.value.message
+
+
+def test_header_service_outage_is_an_archive_error_and_is_retried(archive, stack):
+    standard_pair(archive)
+    archive.header_status = [503, 503]
+    assert analyse(stack).size == 59  # recovered within the retry budget
+    stack2 = Stack(stack.cfg.model_copy(update={"blink_cache_dir": stack.cfg.blink_cache_dir / "other"}))
+    try:
+        archive.header_status = [503] * 12
+        with pytest.raises(UpstreamUnavailable):
+            stack2.service.analyse(*T, FOV)
+    finally:
+        stack2.irsa.close()
+
+
+def test_invalid_calibration_table_keeps_its_own_reason(archive, stack):
+    standard_pair(archive, may_extra=dict(lam=(9.0, 10.0)), dec_extra=dict(lam=(9.0, 10.0)))  # outside 0.75-5 um
+    with pytest.raises(DynamicSelectionError) as err:
+        analyse(stack)
+    assert err.value.code == "invalid_calibration"
+
+
+def test_headers_are_cached_in_memory_and_on_disk(archive, stack, cfg):
+    standard_pair(archive)
+    analyse(stack)
+    n = len(archive.header_requests)
+    assert n == 2
+    stack.service.analyse(*T, 0.05)  # new field of view: new cutouts, same files
+    assert len(archive.header_requests) == n
+    fresh = FullHeaderStore(cfg, stack.irsa)  # a new process: read from disk
+    obs = stack.irsa.search(*T)[0][0]
+    assert fresh.get(obs)["CRPIX1"] and len(archive.header_requests) == n
+
+
+def test_parse_image_header_handles_truncation_and_garbage(archive):
+    det = archive.add(obs_id="W1_2D_0001_3", detector=3, mjd=MAY, target=T, target_pixel=(200, 200), crpix_full=(197.2, 105.4))
+    data = det.full_header_bytes()
+    h = parse_image_header(data + b"\0" * 5000)
+    assert (h["CRPIX1"], h["CRPIX2"], h["NAXIS1"], h["NAXIS2"]) == (197.2, 105.4, 400, 400)
+    with pytest.raises(HeaderIncomplete):
+        parse_image_header(data[:2880 + 400])   # IMAGE header cut short
+    with pytest.raises(HeaderIncomplete):
+        parse_image_header(b"<html>nope</html>" * 200)
+
+
+@pytest.mark.skipif(not Path("~/Downloads/spherex_D5_2025_05_full.fits").expanduser().is_file(), reason="real D5 fixture not available")
+def test_real_full_file_header_parses_from_its_first_bytes():
+    path = Path("~/Downloads/spherex_D5_2025_05_full.fits").expanduser()
+    h = parse_image_header(path.read_bytes()[: 96 * 1024])
+    assert (h["CRPIX1"], h["CRPIX2"], h["NAXIS1"], h["NAXIS2"], h["DETECTOR"]) == (1020.5, 1020.5, 2040, 2040, 5)  # the centre convention holds for normal images
+    with fits.open(path) as full:
+        assert dict(full["IMAGE"].header) == dict(h) or all(full["IMAGE"].header[k] == h[k] for k in ("CRPIX1", "CRVAL1", "CD1_1") if k in h)
+
+
+# ===================================================================================== candidate fallback
+
+
+def test_an_observation_that_failed_is_not_fetched_again_for_another_pair(archive, stack):
+    bad = archive.add(obs_id="2025W20_2D_01b_3", detector=3, mjd=MAY, target=T, target_pixel=(200, 180), sources=STARS, header_poison=True)
+    good = archive.add(obs_id="2025W20_2D_01g_3", detector=3, mjd=MAY, target=T, target_pixel=(200, 200), sources=STARS)
+    d1 = archive.add(obs_id="2025W51_1A_021_3", detector=3, mjd=DEC_MJD, target=T, target_pixel=(190, 181), roll=180.0, sources=STARS)
+    d2 = archive.add(obs_id="2025W51_1A_022_3", detector=3, mjd=DEC_MJD, target=T, target_pixel=(190, 182), roll=180.0, sources=STARS)
+    r = analyse(stack)  # ranking: (bad, d1), (bad, d2), (good, d1), ...
+    assert r.pair.a.obs.obs_id == good.obs_id and r.candidates_tried == 2 and len(r.rejected) == 1 and bad.obs_id in r.rejected[0]
+    assert [d[0] for d in archive.downloads if d[3] > 0.02].count(bad.obs_id) == 1  # its science cutout was fetched once (the 0.01 deg one is the calibration bootstrap)
+    assert archive.header_requests.count(bad.obs_id) == 2  # one attempt = the 96 KB range plus the larger retry range, never repeated for the second pair
+    assert r.pair.b.obs.obs_id == d2.obs_id  # the second pair containing `bad` was skipped; the next admissible pair won
+
+
+def test_the_shortlist_is_extended_only_for_metadata_failures(archive, cfg):
+    stack = Stack(cfg.model_copy(update={"top_pairs_to_try": 1, "max_pairs_to_try": 4}))
+    try:
+        for i, y in enumerate((187, 185)):  # both are one pixel row from the December observation: they rank first and second
+            archive.add(obs_id=f"2025W20_2D_01{i}_3", detector=3, mjd=MAY, target=T, target_pixel=(200, y), sources=STARS, header_poison=True)
+        good = archive.add(obs_id="2025W20_2D_01z_3", detector=3, mjd=MAY, target=T, target_pixel=(200, 194), sources=STARS)
+        archive.add(obs_id="2025W51_1A_02_3", detector=3, mjd=DEC_MJD, target=T, target_pixel=(190, 186), roll=180.0, sources=STARS)
+        r = stack.service.analyse(*T, FOV)  # top_pairs_to_try is 1, yet the two header failures lead on to the third pair
+        assert r.pair.a.obs.obs_id == good.obs_id and r.candidates_tried == 3 and len(r.rejected) == 2
+    finally:
+        stack.irsa.close()
+
+
+def test_data_quality_failures_do_not_trigger_the_extension(archive, cfg):
+    stack = Stack(cfg.model_copy(update={"top_pairs_to_try": 1, "max_pairs_to_try": 4}))
+    try:
+        archive.add(obs_id="2025W20_2D_010_3", detector=3, mjd=MAY, target=T, target_pixel=(200, 187), sources=STARS, nan_box=(160, 200, 175, 205))
+        archive.add(obs_id="2025W20_2D_011_3", detector=3, mjd=MAY, target=T, target_pixel=(200, 196), sources=STARS)
+        archive.add(obs_id="2025W51_1A_02_3", detector=3, mjd=DEC_MJD, target=T, target_pixel=(190, 186), roll=180.0, sources=STARS)
+        with pytest.raises(DynamicSelectionError) as err:
+            stack.service.analyse(*T, FOV)
+        assert err.value.code == "quality_failure"
+        assert len([d for d in archive.downloads if d[3] > 0.02]) == 2  # only the first pair (two cutouts) was tried
+    finally:
+        stack.irsa.close()
+
+
+def test_each_failure_reason_gets_its_own_code_and_a_concise_message(archive, stack):
+    messages = {}
+    for reason in DynamicSelectionError.REASONS:
+        messages[reason] = str(DynamicSelectionError("x", reason).code)
+    assert set(messages.values()) == set(DynamicSelectionError.REASONS)
+    from app.services.dynamic_blink import DETAIL_IN_MESSAGE, METADATA_REASONS, REASON_PRIORITY, REASON_TEXT
+    assert set(REASON_TEXT) >= METADATA_REASONS | DETAIL_IN_MESSAGE and set(REASON_PRIORITY) == set(REASON_TEXT)
+    assert REASON_TEXT["invalid_calibration"] != REASON_TEXT["coordinate_mapping_failed"] != REASON_TEXT["footprint_mismatch"]
 
 
 # ===================================================================================== HTTP API

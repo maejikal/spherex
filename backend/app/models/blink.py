@@ -37,6 +37,9 @@ class BlinkFrame(BaseModel):
     suspect_fraction: float | None = None
     source_fraction: float | None = None
     calibration_version: str | None = None
+    detector_position: list[float] | None = None  # exact zero-based full-detector pixel of the target (archive-header verified)
+    full_image_crpix: list[float] | None = None  # the full image's own reference pixel (not always the detector centre)
+    footprint_error_px: float | None = None  # SIA-polygon prediction vs the verified position
 
 
 class BlinkDisplay(BaseModel):

@@ -8,7 +8,8 @@ export interface ErrorLike {
 
 export type BlinkErrorKind =
   | 'no-coverage' | 'data-unavailable' | 'invalid-coordinates' | 'unreachable' | 'processing' | 'bad-response'
-  | 'no-observations' | 'insufficient-coverage' | 'wavelength-mismatch' | 'invalid-calibration' | 'quality-failure' | 'archive-unavailable';
+  | 'no-observations' | 'insufficient-coverage' | 'wavelength-mismatch' | 'invalid-calibration' | 'quality-failure' | 'archive-unavailable'
+  | 'coordinate-mapping' | 'footprint-mismatch';
 
 export interface BlinkErrorView {
   kind: BlinkErrorKind;
@@ -31,7 +32,10 @@ export function describeBlinkError(error: unknown): BlinkErrorView {
   if (code === 'no_observations') return { kind: 'no-observations', title: 'Nothing to compare here yet', message, retryable: false };
   if (code === 'insufficient_coverage') return { kind: 'insufficient-coverage', title: 'Field not fully covered', message, retryable: false };
   if (code === 'wavelength_mismatch') return { kind: 'wavelength-mismatch', title: 'No wavelength-matched pair', message, retryable: false };
+  // Only a missing/invalid calibration *table* is a calibration problem. A failed position check is its own thing.
   if (code === 'invalid_calibration') return { kind: 'invalid-calibration', title: 'Wavelength calibration unavailable', message, retryable: true };
+  if (code === 'coordinate_mapping_failed') return { kind: 'coordinate-mapping', title: 'Detector position could not be verified', message, retryable: false };
+  if (code === 'footprint_mismatch') return { kind: 'footprint-mismatch', title: 'Archive footprint inconsistent', message, retryable: false };
   if (code === 'quality_failure') return { kind: 'quality-failure', title: 'Too many unusable pixels', message, retryable: false };
   if (code === 'upstream_unavailable' || code === 'upstream_timeout') {
     return { kind: 'archive-unavailable', title: 'NASA/IPAC archive unavailable', message, retryable: true };
