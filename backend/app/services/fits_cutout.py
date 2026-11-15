@@ -243,14 +243,20 @@ def _separation_deg(ra1: float, dec1: float, ra2: np.ndarray | float, dec2: np.n
     return np.degrees(2 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0))))
 
 
-def build_output_wcs(ra: float, dec: float, size: int, pixel_scale_arcsec: float) -> WCS:
-    """North-up, east-left TAN grid centred on (ra, dec); the centre falls between the middle pixels."""
+def build_output_wcs(ra: float, dec: float, size: int, pixel_scale_arcsec: float, rotation_deg: float = 0.0) -> WCS:
+    """North-up, east-left TAN grid centred on (ra, dec) (the centre falls between the middle pixels when
+    ``size`` is even, on the middle pixel when odd). A non-zero ``rotation_deg`` rotates the grid on the sky."""
     wcs = WCS(naxis=2)
     wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
     wcs.wcs.crval = [ra, dec]
     wcs.wcs.crpix = [(size + 1) / 2.0, (size + 1) / 2.0]
     step = pixel_scale_arcsec / 3600.0
-    wcs.wcs.cdelt = [-step, step]
+    if rotation_deg:
+        theta = math.radians(rotation_deg)
+        rot = np.array([[math.cos(theta), -math.sin(theta)], [math.sin(theta), math.cos(theta)]])
+        wcs.wcs.cd = np.array([[-step, 0.0], [0.0, step]]) @ rot
+    else:
+        wcs.wcs.cdelt = [-step, step]
     wcs.wcs.cunit = ["deg", "deg"]
     wcs.pixel_shape = (size, size)
     return wcs

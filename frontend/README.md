@@ -103,6 +103,14 @@ instantaneous with no layout change. Controls: Play/Pause, 0.25 / 0.5 / 1 / 2 s 
 `errors.ts`) with tests in `tests/blink.test.mjs`. On a phone-sized screen only one sheet fits, so the Blink viewer takes it and Inspect is one tap away.
 The prototype covers only the sky around RA 210.54, Dec +54.46; elsewhere the viewer says so and offers a "Go to covered region" button.
 
+### Archive mode and local demo
+
+The Blink Viewer has an observation-source switch. **SPHEREx archive** (the default) calls `/api/blink/dynamic` for the analysed position and shows a
+wavelength-matched pair from NASA/IPAC, with detector, observation ids, central wavelength and bandwidth, the wavelength gap, coverage, provenance and
+warnings. **Local demo** uses the two fixed D5 files (limited sky region). The mode only changes when the user switches it (or the server reports archive mode
+off); a failed archive request is explained in the viewer, with a Retry where it can help and an explicit "Use local demo instead" button, and **never**
+falls back to local data silently. Pure logic: `src/sky/blink/mode.ts`, `response.ts`, `errors.ts`; tests in `tests/blink.test.mjs`.
+
 ## Known limitations
 
 - Requires WebGL. The viewer shows an explanatory error if Aladin cannot start.

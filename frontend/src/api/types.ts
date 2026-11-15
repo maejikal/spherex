@@ -54,6 +54,31 @@ export interface BlinkFrame {
   coverageFraction: number;
   /** Central wavelength (µm) of the detector pixels that fell in the cutout. */
   wavelengthUm?: { min: number; max: number; mean: number };
+  /** Archive mode only: spectral bandwidth (µm) at the target, share of the field on the detector, and quality notes. */
+  bandwidthUm?: number;
+  geometricCoverage?: number;
+  /** Share of usable pixels carrying caution flags (kept, not hidden). */
+  suspectFraction?: number;
+  calibrationVersion?: string;
+}
+
+export type BlinkMode = 'dynamic' | 'local';
+
+export interface BlinkSelection {
+  predictedGapNm: number;
+  actualGapNm: number;
+  actualGapOverBandwidth: number;
+  fieldGapNm: number;
+  epochSeparationDays: number;
+  candidatesTried: number;
+  rejectedCandidates: string[];
+}
+
+export interface BlinkProvenance {
+  source: string;
+  collection: string;
+  release: string;
+  flagPolicy: string;
 }
 
 export interface BlinkAnalysis extends SkyCoordinates {
@@ -64,4 +89,16 @@ export interface BlinkAnalysis extends SkyCoordinates {
   frames: BlinkFrame[];
   commonCoverageFraction: number;
   warnings: string[];
+  /** `dynamic`: pair chosen from the NASA/IPAC archive for this position. `local`: the two fixed demo files. */
+  mode: BlinkMode;
+  fovDeg?: number;
+  rotationDeg?: number;
+  geometricCoverage?: number;
+  selection?: BlinkSelection;
+  provenance?: BlinkProvenance;
+}
+
+export interface BlinkModes {
+  dynamicEnabled: boolean;
+  localDemoAvailable: boolean;
 }

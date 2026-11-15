@@ -208,7 +208,7 @@
 .blink-panel { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px; }
 /* The stage shrinks with the window height so controls and metadata stay visible without scrolling. */
 .blink-stage {
-  position: relative; width: min(100%, max(240px, calc(100dvh - 486px))); margin: 0 auto; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 8px;
+  position: relative; width: min(100%, max(240px, calc(100dvh - 560px))); margin: 0 auto; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: 8px;
   background: repeating-linear-gradient(45deg, #0a0f1c 0 6px, #0d1322 6px 12px); outline-offset: 2px;
 }
 .blink-stage:focus-visible { outline: 2px solid var(--focus); }
@@ -247,3 +247,13 @@
   .workspace--compact .blink-stage { width: min(100%, 34vh); }
   .workspace--compact .blink-controls .icon-button { min-width: 44px; min-height: 44px; }
 }
+
+/* Blink viewer: observation-source switch and the wide metadata row used in archive mode. */
+.blink-mode { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; align-self: flex-start; }
+.blink-mode__option { min-height: 28px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.blink-mode__option:hover:not(:disabled) { background: var(--surface-raised); color: var(--text); }
+.blink-mode__option--active { background: var(--surface-raised); color: var(--accent-strong); font-weight: 650; box-shadow: inset 0 0 0 1px var(--accent); }
+.blink-mode__option:disabled { opacity: .45; cursor: not-allowed; }
+.blink-mode__option:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.blink-meta__wide { grid-column: 1 / -1; }
+.blink-meta__wide dd { white-space: normal; }

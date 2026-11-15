@@ -213,3 +213,125 @@ test('partial coverage is flagged when any frame is below the threshold', () => 
   assert.equal(isPartialCoverage([0.99, 0.97]), false);
   assert.equal(isPartialCoverage([0.99, 0.6]), true);
 });
+
+// ---- archive (dynamic) mode ------------------------------------------------------------------------
+
+import { dynamicBlinkPath, parseBlinkModes } from '../src/sky/blink/response.ts';
+import { blinkQueryKey, modeLabel, resolveBlinkMode } from '../src/sky/blink/mode.ts';
+
+const dynamicPayload = () => {
+  const value = payload();
+  value.mode = 'dynamic';
+  value.fov_deg = 0.1;
+  value.rotation_deg = 15;
+  value.geometric_coverage = 1;
+  value.frames = value.frames.map((f, i) => ({
+    ...f,
+    image_url: `/api/blink/dynamic/images/${f.id}.png?ra=210.8&dec=54.3&fov_deg=0.1`,
+    bandwidth_um: 0.0464,
+    geometric_coverage: 1,
+    suspect_fraction: 0.012,
+    calibration_version: 'cal-1',
+    wavelength_um: { min: 1.86, max: 1.9, mean: i === 0 ? 1.8712261376 : 1.8880076269 },
+  }));
+  value.selection = {
+    predicted_gap_nm: 16.196, actual_gap_nm: 16.781489, actual_gap_over_bandwidth: 0.36, field_gap_nm: 47.4,
+    bandwidth_difference_fraction: 0.005, epoch_separation_days: 211.7, candidates_tried: 2, rejected_candidates: ['A / B: quality'], thresholds: {},
+  };
+  value.provenance = { source: 'NASA/IPAC Infrared Science Archive (IRSA)', collection: 'spherex_dr1', release: 'l2b-v27-2026-198', flag_policy: 'SOURCE kept' };
+  return value;
+};
+
+test('parses an archive-mode response with selection, provenance and per-frame wavelength metadata', () => {
+  const parsed = parseBlinkResponse(dynamicPayload(), resolve);
+  assert.equal(parsed.mode, 'dynamic');
+  assert.equal(parsed.rotationDeg, 15);
+  assert.equal(parsed.fovDeg, 0.1);
+  assert.equal(parsed.frames[0].imageUrl, 'http://api.test/api/blink/dynamic/images/2025-05.png?ra=210.8&dec=54.3&fov_deg=0.1');
+  assert.equal(parsed.frames[0].wavelengthUm.mean, 1.8712261376);
+  assert.equal(parsed.frames[1].bandwidthUm, 0.0464);
+  assert.equal(parsed.frames[0].suspectFraction, 0.012);
+  assert.equal(parsed.selection.actualGapNm, 16.781489);
+  assert.equal(parsed.selection.candidatesTried, 2);
+  assert.deepEqual(parsed.selection.rejectedCandidates, ['A / B: quality']);
+  assert.equal(parsed.provenance.release, 'l2b-v27-2026-198');
+});
+
+test('a local-mode response still parses (no archive fields) and is labelled local', () => {
+  const parsed = parseBlinkResponse(payload(), resolve);
+  assert.equal(parsed.mode, 'local');
+  assert.equal(parsed.selection, undefined);
+  assert.equal(parsed.frames[0].bandwidthUm, undefined);
+});
+
+test('archive responses may only reference the two blink image routes', () => {
+  const value = dynamicPayload();
+  value.frames[0].image_url = '/api/blink/dynamic/../health';
+  assert.throws(() => parseBlinkResponse(value, resolve), BlinkResponseError);
+  const bad = dynamicPayload();
+  bad.frames[1].image_url = 'https://evil.example/x.png';
+  assert.throws(() => parseBlinkResponse(bad, resolve), BlinkResponseError);
+  const ok = dynamicPayload();
+  assert.doesNotThrow(() => parseBlinkResponse(ok, resolve));
+});
+
+test('the archive request carries the captured coordinates and the field of view', () => {
+  const url = new URL(dynamicBlinkPath({ ra: 210.80227, dec: 54.34895 }, 0.1), 'http://x');
+  assert.equal(url.pathname, '/api/blink/dynamic');
+  assert.equal(url.searchParams.get('ra'), '210.80227');
+  assert.equal(url.searchParams.get('dec'), '54.34895');
+  assert.equal(url.searchParams.get('fov_deg'), '0.1');
+});
+
+test('server modes are parsed strictly', () => {
+  assert.deepEqual(parseBlinkModes({ dynamic_enabled: true, local_demo_available: false }), { dynamicEnabled: true, localDemoAvailable: false });
+  assert.deepEqual(parseBlinkModes({ dynamic_enabled: 'yes' }), { dynamicEnabled: false, localDemoAvailable: false });
+  assert.throws(() => parseBlinkModes(null), BlinkResponseError);
+});
+
+test('archive mode is preferred; the local demo is chosen only explicitly or when archive mode is off', () => {
+  const both = { dynamicEnabled: true, localDemoAvailable: true };
+  assert.equal(resolveBlinkMode('dynamic', both), 'dynamic');
+  assert.equal(resolveBlinkMode('local', both), 'local'); // an explicit choice is respected
+  assert.equal(resolveBlinkMode('dynamic', { dynamicEnabled: false, localDemoAvailable: true }), 'local');
+  assert.equal(resolveBlinkMode('local', { dynamicEnabled: true, localDemoAvailable: false }), 'dynamic');
+  assert.equal(resolveBlinkMode('dynamic', undefined), 'dynamic'); // modes not loaded yet: do not guess
+  assert.equal(resolveBlinkMode('dynamic', { dynamicEnabled: false, localDemoAvailable: false }), 'dynamic'); // nothing to fall back to
+});
+
+test('a failed archive request is never answered with local data on its own', () => {
+  // The mode only changes through resolveBlinkMode (server capability) or an explicit user action; errors do not feed into it.
+  const both = { dynamicEnabled: true, localDemoAvailable: true };
+  let mode = 'dynamic';
+  const error = { message: 'archive down', code: 'upstream_unavailable', status: 502 };
+  assert.equal(describeBlinkError(error).kind, 'archive-unavailable');
+  mode = resolveBlinkMode(mode, both);
+  assert.equal(mode, 'dynamic');
+});
+
+test('queries are keyed by mode and position so a mode switch or a new analysis never shows a stale result', () => {
+  const t = { ra: 210.8, dec: 54.3 };
+  assert.notDeepEqual(blinkQueryKey('dynamic', t, 0.1), blinkQueryKey('local', t, 256));
+  assert.notDeepEqual(blinkQueryKey('dynamic', t, 0.1), blinkQueryKey('dynamic', { ra: 210.9, dec: 54.3 }, 0.1));
+  assert.deepEqual(blinkQueryKey('dynamic', t, 0.1), blinkQueryKey('dynamic', { ...t }, 0.1));
+  assert.equal(modeLabel('dynamic'), 'SPHEREx archive');
+  assert.equal(modeLabel('local'), 'Local demo');
+});
+
+test('each archive failure reason gets its own explanation and only transient ones are retryable', () => {
+  const kinds = {
+    no_observations: ['no-observations', false],
+    insufficient_coverage: ['insufficient-coverage', false],
+    wavelength_mismatch: ['wavelength-mismatch', false],
+    invalid_calibration: ['invalid-calibration', true],
+    quality_failure: ['quality-failure', false],
+    upstream_unavailable: ['archive-unavailable', true],
+    upstream_timeout: ['archive-unavailable', true],
+  };
+  for (const [code, [kind, retryable]] of Object.entries(kinds)) {
+    const view = describeBlinkError({ message: `m-${code}`, code, status: code.startsWith('upstream') ? 502 : 404 });
+    assert.equal(view.kind, kind, code);
+    assert.equal(view.retryable, retryable, code);
+    assert.equal(view.message, `m-${code}`); // the backend's own explanation is shown unchanged
+  }
+});

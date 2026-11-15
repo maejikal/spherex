@@ -1,4 +1,4 @@
-import type { BlinkAnalysis, BlinkFrame } from '../../api/types.ts';
+import type { BlinkAnalysis, BlinkFrame, BlinkModes, BlinkProvenance, BlinkSelection } from '../../api/types.ts';
 
 export class BlinkResponseError extends Error {
   constructor(message: string) {
@@ -7,7 +7,18 @@ export class BlinkResponseError extends Error {
   }
 }
 
-const IMAGE_PATH = '/api/blink/images/';
+const IMAGE_PATHS = ['/api/blink/images/', '/api/blink/dynamic/images/'];
+
+/** API path for archive-driven (dynamic) analysis of one position. */
+export function dynamicBlinkPath(coordinates: { ra: number; dec: number }, fovDeg: number): string {
+  const query = new URLSearchParams({ ra: String(coordinates.ra), dec: String(coordinates.dec), fov_deg: String(fovDeg) });
+  return `/api/blink/dynamic?${query}`;
+}
+
+export function parseBlinkModes(value: unknown): BlinkModes {
+  const root = record(value, 'modes');
+  return { dynamicEnabled: root.dynamic_enabled === true, localDemoAvailable: root.local_demo_available === true };
+}
 
 /** API path for the aligned cutouts of one analysed position (coordinates are sent unrounded). */
 export function blinkCutoutsPath(coordinates: { ra: number; dec: number }, size: number): string {
@@ -45,13 +56,19 @@ export function parseBlinkResponse(value: unknown, resolveUrl: (path: string) =>
     frames,
     commonCoverageFraction: fraction(root.common_coverage_fraction, 'common_coverage_fraction'),
     warnings: Array.isArray(root.warnings) ? root.warnings.filter((item): item is string => typeof item === 'string') : [],
+    mode: root.mode === 'dynamic' ? 'dynamic' : 'local',
+    fovDeg: optionalNumber(root.fov_deg),
+    rotationDeg: optionalNumber(root.rotation_deg),
+    geometricCoverage: optionalNumber(root.geometric_coverage),
+    selection: parseSelection(root.selection),
+    provenance: parseProvenance(root.provenance),
   };
 }
 
 function parseFrame(value: unknown, index: number, resolveUrl: (path: string) => string): BlinkFrame {
   const frame = record(value, `frames[${index}]`);
   const imageUrl = text(frame.image_url, `frames[${index}].image_url`);
-  if (!imageUrl.startsWith(IMAGE_PATH)) throw new BlinkResponseError('Blink response referenced an unexpected image location.');
+  if (!IMAGE_PATHS.some((prefix) => imageUrl.startsWith(prefix))) throw new BlinkResponseError('Blink response referenced an unexpected image location.');
   const wavelength = isRecord(frame.wavelength_um)
     ? { min: finite(frame.wavelength_um.min, 'wavelength.min'), max: finite(frame.wavelength_um.max, 'wavelength.max'), mean: finite(frame.wavelength_um.mean, 'wavelength.mean') }
     : undefined;
@@ -66,7 +83,33 @@ function parseFrame(value: unknown, index: number, resolveUrl: (path: string) =>
     imageUrl: resolveUrl(imageUrl),
     coverageFraction: fraction(frame.coverage_fraction, `frames[${index}].coverage_fraction`),
     wavelengthUm: wavelength,
+    bandwidthUm: optionalNumber(frame.bandwidth_um),
+    geometricCoverage: optionalNumber(frame.geometric_coverage),
+    suspectFraction: optionalNumber(frame.suspect_fraction),
+    calibrationVersion: typeof frame.calibration_version === 'string' ? frame.calibration_version : undefined,
   };
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function parseSelection(value: unknown): BlinkSelection | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    predictedGapNm: finite(value.predicted_gap_nm, 'selection.predicted_gap_nm'),
+    actualGapNm: finite(value.actual_gap_nm, 'selection.actual_gap_nm'),
+    actualGapOverBandwidth: finite(value.actual_gap_over_bandwidth, 'selection.actual_gap_over_bandwidth'),
+    fieldGapNm: finite(value.field_gap_nm, 'selection.field_gap_nm'),
+    epochSeparationDays: finite(value.epoch_separation_days, 'selection.epoch_separation_days'),
+    candidatesTried: finite(value.candidates_tried, 'selection.candidates_tried'),
+    rejectedCandidates: Array.isArray(value.rejected_candidates) ? value.rejected_candidates.filter((item): item is string => typeof item === 'string') : [],
+  };
+}
+
+function parseProvenance(value: unknown): BlinkProvenance | undefined {
+  if (!isRecord(value)) return undefined;
+  return { source: text(value.source, 'provenance.source'), collection: text(value.collection, 'provenance.collection'), release: text(value.release, 'provenance.release'), flagPolicy: typeof value.flag_policy === 'string' ? value.flag_policy : '' };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

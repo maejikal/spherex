@@ -65,6 +65,24 @@ class FitsProcessingError(AppError):
     status_code = 500
 
 
+class DynamicSelectionError(AppError):
+    """No scientifically suitable observation pair could be built for the requested field.
+
+    ``reason`` becomes the machine-readable code so the viewer can explain *why*: ``no_observations``,
+    ``insufficient_coverage``, ``wavelength_mismatch``, ``invalid_calibration`` or ``quality_failure``.
+    """
+
+    status_code = 404
+    REASONS = ("no_observations", "insufficient_coverage", "wavelength_mismatch", "invalid_calibration", "quality_failure")
+
+    def __init__(self, message: str, reason: str) -> None:
+        super().__init__(message)
+        if reason not in self.REASONS:
+            raise ValueError(f"unknown reason {reason}")
+        self.reason = reason
+        self.code = reason
+
+
 class ObjectNotFound(AppError):
     code = "object_not_found"
     status_code = 404
