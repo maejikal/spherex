@@ -180,8 +180,12 @@ export function FindPanel({ view, onNavigate }: FindPanelProps) {
             {targets.data.map((target) => (
               <li key={target.id ?? `${target.name}-${target.ra}-${target.dec}`}>
                 <button type="button" className="target-row target-row--compact" onClick={() => onNavigate(target, target.name)}>
-                  <span className="target-row__name">{target.name}</span>
-                  <span className="target-row__coordinates">{formatCoordinate(target.ra, 3)}°, {formatCoordinate(target.dec, 3)}°</span>
+                  <span className="target-row__name" title={target.name}>{target.name}</span>
+                  <span className="target-row__coordinates" aria-label={`${formatCoordinate(target.ra, 3)} degrees right ascension, ${formatCoordinate(target.dec, 3)} degrees declination`}>
+                    <span>{formatCoordinate(target.ra, 3)}°</span>
+                    <span aria-hidden="true">,</span>
+                    <span>{formatCoordinate(target.dec, 3)}°</span>
+                  </span>
                   <ArrowRight aria-hidden="true" size={14} />
                 </button>
               </li>

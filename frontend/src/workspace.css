@@ -58,7 +58,7 @@
 .tool-window__body { scrollbar-color: var(--border) transparent; }
 .app-footer { background: var(--page); border-color: var(--border-subtle); color: var(--text-dim); }
 .viewer-instructions { background: var(--page); color: var(--text-muted); }
-.workspace-announcement { z-index: 9; border-color: var(--border); background: var(--surface); color: var(--text); }
+.workspace-announcement { z-index: 4; border-color: var(--border); background: var(--surface); color: var(--text); pointer-events: none; }
 
 /* Desktop docking changes geometry only; switching never reparents/remounts a tool. */
 @media (min-width: 761px) {

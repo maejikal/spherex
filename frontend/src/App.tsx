@@ -248,7 +248,13 @@ export default function App() {
     setPanels((current) => panelsForAnalysis(current, compactNow));
     setBlinkOpen(true);
     setWindowOrder((order) => orderForAnalysis(order, compactNow));
-    setAnnouncement(`Searching SIMBAD around RA ${formatCoordinate(selected.ra, 5)}°, Dec ${formatCoordinate(selected.dec, 5)}°.`);
+    // Desktop Inspect already announces its inline catalogue loading state. Keep the toast only
+    // on compact screens, where Analyze replaces Inspect with the Blink sheet.
+    if (compactNow) {
+      setAnnouncement(`Searching SIMBAD around RA ${formatCoordinate(selected.ra, 5)}°, Dec ${formatCoordinate(selected.dec, 5)}°.`);
+    } else {
+      setAnnouncement(null);
+    }
   }, []);
 
   const copySelection = useCallback(async () => {
