@@ -1,7 +1,7 @@
 import { parseConstellation, type ConstellationInfo } from '../sky/constellations.ts';
-import { BLINK_CUTOUT_SIZE } from '../sky/blink/config.ts';
-import { blinkCutoutsPath, BlinkResponseError, parseBlinkResponse } from '../sky/blink/response.ts';
-import type { ApiHealth, BlinkAnalysis, CatalogObject, ResolvedObject, SkyTarget } from './types.ts';
+import { BLINK_CUTOUT_SIZE, BLINK_DYNAMIC_FOV_DEG } from '../sky/blink/config.ts';
+import { blinkCutoutsPath, BlinkResponseError, dynamicBlinkPath, parseBlinkModes, parseBlinkResponse } from '../sky/blink/response.ts';
+import type { ApiHealth, BlinkAnalysis, BlinkModes, CatalogObject, ResolvedObject, SkyTarget } from './types.ts';
 import type { SkyCoordinates } from '../sky/coordinates.ts';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -191,6 +191,34 @@ export async function getBlinkCutouts(
   signal?: AbortSignal,
 ): Promise<BlinkAnalysis> {
   const value = await fetchJson(blinkCutoutsPath(coordinates, size), signal);
+  try {
+    return parseBlinkResponse(value, (path) => `${API_BASE_URL}${path}`);
+  } catch (error) {
+    if (error instanceof BlinkResponseError) throw new ApiError(error.message, { code: 'invalid_response', status: 200 });
+    throw error;
+  }
+}
+
+/** Which blink modes the server offers (archive-driven and/or the fixed local demo files). */
+export async function getBlinkModes(signal?: AbortSignal): Promise<BlinkModes> {
+  try {
+    return parseBlinkModes(await fetchJson('/api/blink/modes', signal));
+  } catch (error) {
+    if (error instanceof BlinkResponseError) throw new ApiError(error.message, { code: 'invalid_response', status: 200 });
+    throw error;
+  }
+}
+
+/**
+ * Wavelength-matched two-epoch cutouts for any covered position, discovered through NASA/IPAC IRSA.
+ * The first request for a new field can take tens of seconds (archive search and FITS downloads).
+ */
+export async function getDynamicBlink(
+  coordinates: SkyCoordinates,
+  fovDeg: number = BLINK_DYNAMIC_FOV_DEG,
+  signal?: AbortSignal,
+): Promise<BlinkAnalysis> {
+  const value = await fetchJson(dynamicBlinkPath(coordinates, fovDeg), signal);
   try {
     return parseBlinkResponse(value, (path) => `${API_BASE_URL}${path}`);
   } catch (error) {

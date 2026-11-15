@@ -19,6 +19,7 @@ class WavelengthRange(BaseModel):
 
 
 class BlinkFrame(BaseModel):
+    # Fields below the first group are filled by the dynamic (archive) endpoint only.
     id: str
     label: str
     date: str
@@ -31,6 +32,11 @@ class BlinkFrame(BaseModel):
     wavelength_um: WavelengthRange | None = None
     background_mjy_sr: float | None = None
     unit: str
+    bandwidth_um: float | None = None
+    geometric_coverage: float | None = None
+    suspect_fraction: float | None = None
+    source_fraction: float | None = None
+    calibration_version: str | None = None
 
 
 class BlinkDisplay(BaseModel):
@@ -52,3 +58,34 @@ class BlinkResponse(BaseModel):
     frames: list[BlinkFrame]
     common_coverage_fraction: float
     warnings: list[str]
+
+
+class PairSelectionInfo(BaseModel):
+    predicted_gap_nm: float
+    actual_gap_nm: float
+    actual_gap_over_bandwidth: float
+    field_gap_nm: float
+    bandwidth_difference_fraction: float
+    epoch_separation_days: float
+    candidates_tried: int
+    rejected_candidates: list[str]
+    thresholds: dict[str, float]
+
+
+class Provenance(BaseModel):
+    source: str
+    collection: str
+    release: str
+    archive_search: str
+    interpolation: str
+    flag_policy: str
+
+
+class DynamicBlinkResponse(BlinkResponse):
+    mode: str = "dynamic"
+    fov_deg: float
+    rotation_deg: int
+    wcs: dict
+    geometric_coverage: float
+    selection: PairSelectionInfo
+    provenance: Provenance

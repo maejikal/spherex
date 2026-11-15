@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Compass, Eye, Search, Share2, SlidersHorizontal, Telescope } from 'lucide-react';
 import { getApiHealth, getConstellation } from './api/client.ts';
-import type { ExplorerView } from './api/types.ts';
+import type { BlinkMode, ExplorerView } from './api/types.ts';
 import { AladinSkyViewer, type ViewerStatus } from './components/AladinSkyViewer.tsx';
 import { BlinkViewer } from './components/BlinkViewer.tsx';
 import { InspectPanel, FindPanel, ViewPanel } from './components/Panels.tsx';
@@ -63,6 +63,8 @@ export default function App() {
   // later selection nor moving the sky viewer changes (or re-requests) an analysis that is already open.
   const [blinkOpen, setBlinkOpen] = useState(false);
   const [blinkTarget, setBlinkTarget] = useState<SkyCoordinates | null>(null);
+  // Archive (dynamic) analysis is preferred; the local demo is only used when chosen explicitly (never as a silent fallback).
+  const [blinkMode, setBlinkMode] = useState<BlinkMode>('dynamic');
 
   useEffect(() => {
     const narrowViewport = window.matchMedia('(max-width: 760px)');
@@ -441,7 +443,7 @@ export default function App() {
           workspaceRef={workspaceRef}
           onClose={() => setBlinkOpen(false)}
         >
-          <BlinkViewer target={blinkTarget} onGoToCoveredRegion={navigateTo} />
+          <BlinkViewer target={blinkTarget} mode={blinkMode} onModeChange={setBlinkMode} onGoToCoveredRegion={navigateTo} />
         </ToolWindow>
 
         {announcement && <p className="workspace-announcement" role="status" aria-live="polite">{announcement}</p>}

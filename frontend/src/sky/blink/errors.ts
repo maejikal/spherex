@@ -6,7 +6,9 @@ export interface ErrorLike {
   status?: number | null;
 }
 
-export type BlinkErrorKind = 'no-coverage' | 'data-unavailable' | 'invalid-coordinates' | 'unreachable' | 'processing' | 'bad-response';
+export type BlinkErrorKind =
+  | 'no-coverage' | 'data-unavailable' | 'invalid-coordinates' | 'unreachable' | 'processing' | 'bad-response'
+  | 'no-observations' | 'insufficient-coverage' | 'wavelength-mismatch' | 'invalid-calibration' | 'quality-failure' | 'archive-unavailable';
 
 export interface BlinkErrorView {
   kind: BlinkErrorKind;
@@ -24,6 +26,15 @@ export function describeBlinkError(error: unknown): BlinkErrorView {
       message: `${message} This prototype uses only two local observations that cover a limited region of the sky.`,
       retryable: false,
     };
+  }
+  // Archive (dynamic) mode: the backend names the reason a pair could not be built.
+  if (code === 'no_observations') return { kind: 'no-observations', title: 'Nothing to compare here yet', message, retryable: false };
+  if (code === 'insufficient_coverage') return { kind: 'insufficient-coverage', title: 'Field not fully covered', message, retryable: false };
+  if (code === 'wavelength_mismatch') return { kind: 'wavelength-mismatch', title: 'No wavelength-matched pair', message, retryable: false };
+  if (code === 'invalid_calibration') return { kind: 'invalid-calibration', title: 'Wavelength calibration unavailable', message, retryable: true };
+  if (code === 'quality_failure') return { kind: 'quality-failure', title: 'Too many unusable pixels', message, retryable: false };
+  if (code === 'upstream_unavailable' || code === 'upstream_timeout') {
+    return { kind: 'archive-unavailable', title: 'NASA/IPAC archive unavailable', message, retryable: true };
   }
   if (code === 'fits_unavailable') {
     return { kind: 'data-unavailable', title: 'SPHEREx image files unavailable', message, retryable: true };

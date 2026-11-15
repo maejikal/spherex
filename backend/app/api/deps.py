@@ -7,7 +7,10 @@ from fastapi import Request
 
 from ..providers.spherex import SphereXHiPSProvider
 from ..providers.sesame import SesameResolver
+from ..config import Settings
 from ..services.blink_service import BlinkService
+from ..services.dynamic_blink import DynamicBlinkService
+from ..services.irsa_archive import IrsaClient
 from ..services.catalogue_search import CatalogueSearchService
 from ..services.object_resolver import ObjectResolverService
 from ..services.target_service import TargetService
@@ -22,6 +25,9 @@ class Services:
     catalogue: CatalogueSearchService
     targets: TargetService
     blink: BlinkService
+    settings: Settings
+    irsa: IrsaClient
+    dynamic: DynamicBlinkService | None
 
 
 def get_services(request: Request) -> Services:

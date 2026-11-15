@@ -2,9 +2,10 @@ import { useCallback, useEffect, useReducer, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, Info, LoaderCircle, MapPin, Pause, Play, RotateCcw, SkipBack, SkipForward, ZoomIn, ZoomOut } from 'lucide-react';
-import { getBlinkCutouts } from '../api/client.ts';
-import type { BlinkAnalysis, BlinkFrame } from '../api/types.ts';
-import { BLINK_COVERED_REGION, BLINK_CUTOUT_SIZE, BLINK_DISCLAIMER } from '../sky/blink/config.ts';
+import { getBlinkCutouts, getBlinkModes, getDynamicBlink } from '../api/client.ts';
+import type { BlinkAnalysis, BlinkFrame, BlinkMode, BlinkModes } from '../api/types.ts';
+import { BLINK_COVERED_REGION, BLINK_CUTOUT_SIZE, BLINK_DISCLAIMER, BLINK_DYNAMIC_FOV_DEG } from '../sky/blink/config.ts';
+import { blinkQueryKey, modeLabel, resolveBlinkMode } from '../sky/blink/mode.ts';
 import { describeBlinkError } from '../sky/blink/errors.ts';
 import {
   activeTimer,
@@ -20,14 +21,23 @@ import type { SkyCoordinates } from '../sky/coordinates.ts';
 interface BlinkViewerProps {
   /** Position captured when the user chose Analyze area; the camera moving afterwards does not change it. */
   target: SkyCoordinates | null;
+  /** `dynamic` asks NASA/IPAC for a wavelength-matched pair at the target; `local` uses the two fixed demo files. */
+  mode: BlinkMode;
+  onModeChange: (mode: BlinkMode) => void;
   onGoToCoveredRegion: (coordinates: SkyCoordinates, label: string) => void;
 }
 
-export function BlinkViewer({ target, onGoToCoveredRegion }: BlinkViewerProps) {
-  // The query key is the analysed position, so a newer analysis can never show an older response.
+export function BlinkViewer({ target, mode, onModeChange, onGoToCoveredRegion }: BlinkViewerProps) {
+  const modes = useQuery({ queryKey: ['blink', 'modes'], queryFn: ({ signal }) => getBlinkModes(signal), staleTime: 5 * 60_000, retry: false });
+  const active = resolveBlinkMode(mode, modes.data);
+  useEffect(() => {
+    if (active !== mode) onModeChange(active); // e.g. the server has archive mode switched off
+  }, [active, mode, onModeChange]);
+
+  // The query key is the analysed position and mode, so a newer analysis can never show an older response.
   const query = useQuery({
-    queryKey: ['blink', target?.ra, target?.dec, BLINK_CUTOUT_SIZE],
-    queryFn: ({ signal }) => getBlinkCutouts(target!, BLINK_CUTOUT_SIZE, signal),
+    queryKey: blinkQueryKey(active, target, active === 'dynamic' ? BLINK_DYNAMIC_FOV_DEG : BLINK_CUTOUT_SIZE),
+    queryFn: ({ signal }) => (active === 'dynamic' ? getDynamicBlink(target!, BLINK_DYNAMIC_FOV_DEG, signal) : getBlinkCutouts(target!, BLINK_CUTOUT_SIZE, signal)),
     enabled: Boolean(target),
     staleTime: 5 * 60_000,
     retry: false,
@@ -38,25 +48,27 @@ export function BlinkViewer({ target, onGoToCoveredRegion }: BlinkViewerProps) {
   }
 
   const position = `RA ${formatCoordinate(target.ra, 5)}°, Dec ${target.dec >= 0 ? '+' : ''}${formatCoordinate(target.dec, 5)}°`;
+  const switcher = <ModeSwitch mode={active} modes={modes.data} onChange={onModeChange} />;
 
   if (query.data) {
-    return <BlinkPlayer key={query.data.frames.map((frame) => frame.imageUrl).join('|')} analysis={query.data} />;
+    return <BlinkPlayer key={query.data.frames.map((frame) => frame.imageUrl).join('|')} analysis={query.data} switcher={switcher} />;
   }
 
   if (query.isError && !query.isFetching) {
     const problem = describeBlinkError(query.error);
     return (
       <div className="blink-panel">
+        {switcher}
         <div className="callout callout--error" role="alert">
           <AlertCircle aria-hidden="true" size={17} />
           <div>
             <strong>{problem.title}</strong>
             <p>{problem.message}</p>
-            <p className="blink-position">{position}</p>
+            <p className="blink-position">{modeLabel(active)} · {position}</p>
           </div>
         </div>
         <div className="button-row">
-          {problem.kind === 'no-coverage' && (
+          {active === 'local' && problem.kind === 'no-coverage' && (
             <button className="button button--secondary" type="button" onClick={() => onGoToCoveredRegion(BLINK_COVERED_REGION, 'the covered SPHEREx region')}>
               <MapPin aria-hidden="true" size={15} />Go to covered region
             </button>
@@ -66,6 +78,11 @@ export function BlinkViewer({ target, onGoToCoveredRegion }: BlinkViewerProps) {
               <RotateCcw aria-hidden="true" size={15} />Retry
             </button>
           )}
+          {active === 'dynamic' && modes.data?.localDemoAvailable && (
+            <button className="button button--quiet" type="button" onClick={() => onModeChange('local')} title="Compare the two fixed local observations instead (limited sky region)">
+              Use local demo instead
+            </button>
+          )}
         </div>
       </div>
     );
@@ -73,9 +90,11 @@ export function BlinkViewer({ target, onGoToCoveredRegion }: BlinkViewerProps) {
 
   return (
     <div className="blink-panel">
+      {switcher}
       <div className="blink-stage blink-stage--loading" role="status" aria-live="polite">
         <LoaderCircle className="spin" aria-hidden="true" size={26} />
-        <p>Preparing aligned SPHEREx observations…</p>
+        <p>{active === 'dynamic' ? 'Searching NASA/IPAC for wavelength-matched SPHEREx observations…' : 'Preparing aligned SPHEREx observations…'}</p>
+        {active === 'dynamic' && <p className="blink-position">Downloads small FITS cutouts; a new field can take up to a minute.</p>}
         <p className="blink-position">{position}</p>
       </div>
       <p className="blink-note">{BLINK_DISCLAIMER}</p>
@@ -83,7 +102,31 @@ export function BlinkViewer({ target, onGoToCoveredRegion }: BlinkViewerProps) {
   );
 }
 
-function BlinkPlayer({ analysis }: { analysis: BlinkAnalysis }) {
+function ModeSwitch({ mode, modes, onChange }: { mode: BlinkMode; modes: BlinkModes | undefined; onChange: (mode: BlinkMode) => void }) {
+  const options: { value: BlinkMode; enabled: boolean; hint: string }[] = [
+    { value: 'dynamic', enabled: modes ? modes.dynamicEnabled : true, hint: 'Find a wavelength-matched pair from the NASA/IPAC SPHEREx archive for this position' },
+    { value: 'local', enabled: modes ? modes.localDemoAvailable : true, hint: 'Two fixed local observations that cover only a small region of sky' },
+  ];
+  return (
+    <div className="blink-mode" role="group" aria-label="Observation source">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className={`blink-mode__option${mode === option.value ? ' blink-mode__option--active' : ''}`}
+          aria-pressed={mode === option.value}
+          disabled={!option.enabled}
+          title={option.enabled ? option.hint : 'Not available on this server'}
+          onClick={() => mode !== option.value && onChange(option.value)}
+        >
+          {modeLabel(option.value)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BlinkPlayer({ analysis, switcher }: { analysis: BlinkAnalysis; switcher: React.ReactNode }) {
   const frameCount = analysis.frames.length;
   const [player, dispatch] = useReducer(playerReducer, undefined, initialPlayer);
   const [zoom, setZoom] = useState(1);
@@ -125,6 +168,7 @@ function BlinkPlayer({ analysis }: { analysis: BlinkAnalysis }) {
 
   return (
     <div className="blink-panel">
+      {switcher}
       <div className="blink-stage" tabIndex={0} role="group" aria-label={`${active.label} observation. Space plays or pauses; arrow keys change frame.`} onKeyDown={onKeyDown}>
         <div className="blink-stage__scroller">
           <div className="blink-stage__canvas" style={{ width: `${zoom * 100}%` }} data-zoomed={zoom > 1}>
@@ -206,8 +250,12 @@ function BlinkPlayer({ analysis }: { analysis: BlinkAnalysis }) {
         {active.detector !== undefined && <div><dt>Detector</dt><dd>{active.detector}</dd></div>}
         {active.obsid && <div><dt>Observation ID</dt><dd>{active.obsid}</dd></div>}
         <div><dt>Usable data</dt><dd>{Math.round(active.coverageFraction * 100)}%</dd></div>
-        {active.wavelengthUm && <div><dt>Wavelength here</dt><dd>{active.wavelengthUm.mean.toFixed(2)} µm</dd></div>}
-        <div><dt>Field</dt><dd>{analysis.fieldOfViewArcmin.toFixed(1)}′ · {analysis.pixelScaleArcsec}″/px</dd></div>
+        {active.wavelengthUm && <div><dt>Wavelength here</dt><dd>{analysis.mode === 'dynamic' ? `${active.wavelengthUm.mean.toFixed(4)} µm` : `${active.wavelengthUm.mean.toFixed(2)} µm`}{active.bandwidthUm !== undefined && ` ± ${(active.bandwidthUm * 500).toFixed(0)} nm`}</dd></div>}
+        {analysis.selection && <div><dt>Wavelength gap</dt><dd>{analysis.selection.actualGapNm.toFixed(1)} nm ({Math.round(analysis.selection.actualGapOverBandwidth * 100)}% of bandwidth)</dd></div>}
+        {active.geometricCoverage !== undefined && <div><dt>On detector</dt><dd>{Math.round(active.geometricCoverage * 100)}%</dd></div>}
+        {active.suspectFraction !== undefined && <div><dt>Caution flags</dt><dd>{Math.round(active.suspectFraction * 100)}% of usable px</dd></div>}
+        <div><dt>Field</dt><dd>{analysis.fieldOfViewArcmin.toFixed(1)}′ · {analysis.pixelScaleArcsec}″/px{analysis.rotationDeg ? ` · rotated ${analysis.rotationDeg}°` : ''}</dd></div>
+        {analysis.provenance && <div className="blink-meta__wide"><dt>Source</dt><dd>{analysis.provenance.source} · {analysis.provenance.collection} · {analysis.provenance.release}</dd></div>}
       </dl>
 
       <p className="blink-note">{BLINK_DISCLAIMER}</p>

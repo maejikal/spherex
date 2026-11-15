@@ -71,6 +71,48 @@ class Settings(BaseSettings):
     blink_cache_entries: int = Field(default=24, ge=1)
     blink_cache_ttl_seconds: int = 3600
 
+    # --- Dynamic blink viewer: SPHEREx observations discovered through NASA/IPAC IRSA ------------
+    blink_dynamic_enabled: bool = True
+    irsa_sia_url: str = "https://irsa.ipac.caltech.edu/SIA"
+    irsa_collection: str = "spherex_dr1"
+    # access_url values come from the archive's response; only these hosts are ever contacted.
+    irsa_allowed_hosts: list[str] = ["irsa.ipac.caltech.edu"]
+    irsa_connect_timeout: float = 10.0
+    irsa_sia_read_timeout: float = 60.0
+    irsa_download_read_timeout: float = 180.0
+    irsa_max_retries: int = Field(default=3, ge=0, le=6)
+    irsa_backoff_base: float = Field(default=1.0, ge=0)
+    irsa_max_download_bytes: int = 400 * 1024 * 1024
+    sia_cache_ttl_seconds: int = 3600
+    sia_cache_entries: int = Field(default=64, ge=1)
+    # On-disk cache of FITS cutouts and detector calibrations (git-ignored). Bounded; oldest files evicted first.
+    blink_cache_dir: Path = BACKEND_ROOT / ".cache" / "blink"
+    blink_cache_max_bytes: int = 1024 * 1024 * 1024
+    # Optional local full-detector images used only to seed the per-detector wavelength calibration without a download.
+    blink_calibration_seed_files: list[Path] = [
+        Path("~/Downloads/spherex_D3_2025_05_full.fits"),
+        Path("~/Downloads/spherex_D5_2025_05_full.fits"),
+    ]
+    dynamic_fov_default: float = Field(default=0.1, gt=0)
+    dynamic_fov_min: float = Field(default=0.02, gt=0)
+    dynamic_fov_max: float = Field(default=0.5, gt=0)
+    dynamic_overscan: float = Field(default=1.5, ge=1.0, le=3.0)
+    dynamic_detector_buffer_px: float = Field(default=20.0, ge=0)
+    # Pair selection. These are provisional engineering heuristics, NOT established scientific thresholds.
+    epoch_gap_days: float = 30.0            # observations closer than this belong to one survey epoch
+    min_epoch_separation_days: float = 60.0
+    max_pair_gap_nm: float = 30.0
+    max_gap_over_bandwidth: float = 0.75    # |delta lambda| / mean bandwidth at the target
+    max_field_gap_over_bandwidth: float = 1.5  # worst |delta lambda| / mean bandwidth anywhere in the field
+    max_bandwidth_difference_fraction: float = 0.25
+    top_pairs_to_try: int = Field(default=5, ge=1, le=20)
+    # Exact-verification limits.
+    min_geometric_coverage: float = Field(default=0.98, gt=0, le=1)
+    min_common_good_fraction: float = Field(default=0.85, gt=0, le=1)
+    max_position_error_px: float = 25.0     # predicted (SIA polygon) vs exact (cutout WCS) detector position
+    dynamic_interp_min_weight: float = Field(default=0.99, gt=0, le=1)
+    dynamic_result_cache_entries: int = Field(default=12, ge=1)
+
     # --- Request limits --------------------------------------------------------
     max_name_length: int = 100
     max_nearby_radius_arcsec: float = 120.0

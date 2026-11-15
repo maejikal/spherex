@@ -23,6 +23,9 @@ from .providers.sesame import SesameResolver
 from .providers.simbad import SimbadCatalogue
 from .providers.spherex import SphereXHiPSProvider
 from .services.blink_service import BlinkService
+from .services.dynamic_blink import DynamicBlinkService
+from .services.irsa_archive import CutoutStore, IrsaClient
+from .services.spherex_calibration import CalibrationRegistry
 from .services.catalogue_search import CatalogueSearchService
 from .services.object_resolver import ObjectResolverService
 from .services.target_service import DEFAULT_DATA_FILE, TargetService
@@ -52,6 +55,11 @@ def build_services(settings: Settings, targets_file: Path = DEFAULT_DATA_FILE) -
 
     spherex = SphereXHiPSProvider(upstream("SPHEREx HiPS (IRSA)"), settings)
     sesame = SesameResolver(upstream("CDS Sesame"), settings)
+    irsa = IrsaClient(settings)
+    dynamic = None
+    if settings.blink_dynamic_enabled:
+        registry = CalibrationRegistry(Path(settings.blink_cache_dir).expanduser() / "calibration")
+        dynamic = DynamicBlinkService(settings, irsa, CutoutStore(settings, irsa), registry)
     return Services(
         http=client,
         spherex=spherex,
@@ -60,6 +68,9 @@ def build_services(settings: Settings, targets_file: Path = DEFAULT_DATA_FILE) -
         catalogue=CatalogueSearchService(SimbadCatalogue(upstream("SIMBAD"), settings), settings),
         targets=TargetService(targets_file),
         blink=BlinkService(settings),
+        settings=settings,
+        irsa=irsa,
+        dynamic=dynamic,
     )
 
 
@@ -74,6 +85,7 @@ def create_app(settings: Settings | None = None, targets_file: Path = DEFAULT_DA
             yield
         finally:
             await services.http.aclose()
+            services.irsa.close()
 
     app = FastAPI(
         title="Sky Explorer API",
