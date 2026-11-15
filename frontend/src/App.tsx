@@ -19,7 +19,7 @@ import type { SkyCoordinates } from './sky/coordinates.ts';
 import { resolveFrame, validChannelOrNull } from './sky/spherex/channels.ts';
 import { SPHEREX_HIPS_URL, SPHEREX_SURVEY_ID } from './sky/spherex/config.ts';
 import { fetchSurveyInfo } from './sky/spherex/properties.ts';
-import { parseViewSearch, serializeViewSearch } from './state/urlView.ts';
+import { serializeViewSearch, viewForSearch } from './state/urlView.ts';
 import { initialPanels, orderForAnalysis, panelsForAnalysis, raise, togglePanel as toggleVisibility, zIndexFor } from './state/windows.ts';
 import type { PanelId, PanelVisibility, WindowId } from './state/windows.ts';
 import { useExplorerStore } from './state/explorerStore.ts';
@@ -120,7 +120,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    const initialView = parseViewSearch(window.location.search);
+    const initialView = viewForSearch(window.location.search);
     // A malformed channel (e.g. channel=abc) is already ignored; drop it from the address bar too.
     if (initialView && initialView.channel === null && new URLSearchParams(window.location.search).has('channel')) {
       window.history.replaceState(window.history.state, '', `${window.location.pathname}${serializeViewSearch(initialView, window.location.search)}${window.location.hash}`);
@@ -153,7 +153,7 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = () => {
-      const previousView = parseViewSearch(window.location.search);
+      const previousView = viewForSearch(window.location.search);
       const currentView = useExplorerStore.getState().view;
       // Review-only history entries must not clear sky selection or reset analysis.
       if (previousView && currentView && serializeViewSearch(previousView) === serializeViewSearch(currentView)) return;

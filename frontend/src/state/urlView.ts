@@ -65,6 +65,28 @@ export function parseViewSearch(search: string): ShareableView | null {
   };
 }
 
+/**
+ * What a visit with no view in its address opens on, so a first-time visitor sees real SPHEREx imagery
+ * straight away instead of an empty sky. It is the Andromeda Galaxy (M31), one of the backend's
+ * tile-verified destinations, at the survey's default wavelength. Only a clean address (none of ra, dec or
+ * scale) gets it: a link that names a view but is malformed still shows the empty "Choose a position" state.
+ */
+export const LANDING_VIEW: ShareableView = {
+  ra: 10.684708,
+  dec: 41.26875,
+  scale: 6,
+  survey: SPHEREX_SURVEY_ID,
+  grid: false,
+  channel: null,
+};
+
+export function viewForSearch(search: string): ShareableView | null {
+  const parsed = parseViewSearch(search);
+  if (parsed) return parsed;
+  const params = new URLSearchParams(search);
+  return params.has('ra') || params.has('dec') || params.has('scale') ? null : { ...LANDING_VIEW };
+}
+
 export function serializeViewSearch(view: ShareableView, currentSearch = ''): string {
   const params = new URLSearchParams(currentSearch);
   params.set('ra', String(view.ra));

@@ -54,3 +54,14 @@ test('BUG-010: URL parsing keeps any non-negative integer channel for validation
   // Normalising drops the parameter from the URL instead of keeping a frame that is not shown.
   assert.doesNotMatch(serializeViewSearch({ ra: 10, dec: 5, scale: 3, survey: 'spherex', grid: false, channel: null }, '?channel=999'), /channel=/);
 });
+
+test('a clean address opens on the verified landing view; a malformed view link does not', async () => {
+  const { LANDING_VIEW, viewForSearch } = await import('../src/state/urlView.ts');
+  assert.deepEqual(viewForSearch(''), LANDING_VIEW);
+  assert.deepEqual(viewForSearch('?review=queue'), LANDING_VIEW);
+  assert.notEqual(viewForSearch(''), LANDING_VIEW, 'callers get their own copy');
+  assert.equal(viewForSearch('?ra=abc&dec=1&scale=2'), null);
+  assert.equal(viewForSearch('?ra=10'), null);
+  assert.equal(viewForSearch('?scale=2'), null);
+  assert.equal(viewForSearch('?ra=1&dec=2&scale=3').ra, 1);
+});
