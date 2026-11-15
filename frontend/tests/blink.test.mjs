@@ -131,8 +131,11 @@ test('without Inspect on screen it falls back to the bottom centre', () => {
 
 // ---- playback ------------------------------------------------------------------------------------
 
-test('starts paused on the first frame at 0.5 s', () => {
-  assert.deepEqual(initialPlayer(), { frame: 0, playing: false, intervalMs: 500 });
+test('autoplays each loaded observation from the first frame at 0.5 s', () => {
+  const player = initialPlayer();
+  assert.deepEqual(player, { frame: 0, playing: true, intervalMs: 500 });
+  assert.equal(activeTimer(player, 2, false), null); // playback waits until every image is ready
+  assert.equal(activeTimer(player, 2, true), 500);
   assert.equal(DEFAULT_BLINK_INTERVAL_MS, 500);
   assert.deepEqual([...BLINK_INTERVALS_MS], [100, 250, 500]);
 });
@@ -145,7 +148,7 @@ test('left and right arrow keys map to previous and next frames only', () => {
 });
 
 test('play alternates between the two frames and wraps', () => {
-  let state = playerReducer(initialPlayer(), { type: 'toggle', frameCount: 2 });
+  let state = playerReducer({ ...initialPlayer(), playing: false }, { type: 'toggle', frameCount: 2 });
   assert.equal(state.playing, true);
   const seen = [];
   for (let i = 0; i < 5; i += 1) {
@@ -156,7 +159,7 @@ test('play alternates between the two frames and wraps', () => {
 });
 
 test('ticks do nothing while paused (a stale timer cannot advance the frame)', () => {
-  const paused = initialPlayer();
+  const paused = { ...initialPlayer(), playing: false };
   assert.equal(playerReducer(paused, { type: 'tick', frameCount: 2 }), paused);
 });
 
@@ -192,7 +195,7 @@ test('exactly one timer runs, at the current speed, only while playing with imag
 });
 
 test('a single frame cannot start playback', () => {
-  assert.equal(playerReducer(initialPlayer(), { type: 'toggle', frameCount: 1 }).playing, false);
+  assert.equal(playerReducer({ ...initialPlayer(), playing: false }, { type: 'toggle', frameCount: 1 }).playing, false);
 });
 
 test('zoom steps through 1x, 2x and 4x and stops at the ends', () => {

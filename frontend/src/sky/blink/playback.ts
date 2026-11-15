@@ -20,7 +20,8 @@ export type PlayerAction =
   | { type: 'pause' };
 
 export function initialPlayer(): PlayerState {
-  return { frame: 0, playing: false, intervalMs: DEFAULT_BLINK_INTERVAL_MS };
+  // Start each newly loaded observation automatically; activeTimer still waits for every image to decode.
+  return { frame: 0, playing: true, intervalMs: DEFAULT_BLINK_INTERVAL_MS };
 }
 
 export function frameDirectionForKey(key: string): -1 | 1 | null {
