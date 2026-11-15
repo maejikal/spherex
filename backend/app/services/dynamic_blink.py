@@ -302,8 +302,9 @@ class DynamicBlinkService:
         self._results: TTLCache[DynamicResult] = TTLCache(settings.dynamic_result_cache_entries, settings.blink_cache_ttl_seconds)
         self._seeded = False
         self._pair_settings = PairSettings(
-            settings.max_pair_gap_nm, settings.max_gap_over_bandwidth, settings.max_field_gap_over_bandwidth,
-            settings.max_bandwidth_difference_fraction, settings.min_epoch_separation_days,
+            max_pair_gap_nm=settings.max_pair_gap_nm, max_gap_over_bandwidth=settings.max_gap_over_bandwidth,
+            max_bandwidth_difference_fraction=settings.max_bandwidth_difference_fraction,
+            min_epoch_separation_days=settings.min_epoch_separation_days,
         )
 
     # -- public ----------------------------------------------------------------------------------
@@ -516,14 +517,15 @@ class DynamicBlinkService:
 
     def _no_candidate_reason(self, r, fov: float) -> tuple[str, str]:
         s = self._s
-        if r.no_common_rotation and r.no_common_rotation >= r.rejected_wavelength + r.rejected_bandwidth + r.rejected_field:
+        if r.no_common_rotation and r.no_common_rotation >= r.rejected_wavelength + r.rejected_bandwidth:
             return "insufficient_coverage", f"No pair of observations covers the same {fov:g}° field at a common orientation. Try a smaller field of view."
-        if r.too_close_in_time and not (r.rejected_wavelength or r.rejected_bandwidth or r.rejected_field):
+        if r.too_close_in_time and not (r.rejected_wavelength or r.rejected_bandwidth):
             return "no_observations", f"Observations of this field are less than {s.min_epoch_separation_days:g} days apart."
-        hint = " The wavelength changes across the field, so a smaller field of view may allow a match." if r.rejected_field else ""
         return "wavelength_mismatch", (
-            f"{r.considered} cross-epoch observation pair(s) cover this field, but none has comparable wavelengths there "
-            f"(within {s.max_pair_gap_nm:g} nm and {s.max_gap_over_bandwidth:.0%} of the bandwidth). Blinking them would risk false changes.{hint}")
+            f"{r.considered} cross-epoch observation pair(s) cover this field, but none has comparable wavelengths at the target "
+            f"(within {s.max_pair_gap_nm:g} nm and {s.max_gap_over_bandwidth:.0%} of the bandwidth). "
+            "Matching uses the target's detector position and wavelength calibration, independent of field of view. "
+            "Blinking unmatched wavelengths would risk false changes.")
 
     def _verify_and_build(self, cand: PairCandidate, ra: float, dec: float, fov: float, tried: int, rejected: list[str],
                           calibrations: dict[str, DetectorCalibration], excluded: dict[str, str], *, cached_only: bool = False, wavelength_um: float | None = None) -> DynamicResult:
@@ -585,8 +587,7 @@ class DynamicBlinkService:
         if not common.any():
             raise _Reject("quality_failure", "no pixel is valid in both frames")
         field_gap = float(np.nanmax(np.abs(fa.wavelength_map - fb.wavelength_map)[common])) * 1000
-        if field_gap / mean_bw_nm > s.max_field_gap_over_bandwidth:
-            raise _Reject("wavelength_mismatch", f"wavelength difference reaches {field_gap:.1f} nm across the field")
+        # The FOV changes this diagnostic, never the target's spectral compatibility.
         common_good = float(common.mean())
         if common_good < s.min_common_good_fraction:
             raise _Reject("quality_failure", f"common usable coverage {common_good:.1%} is below {s.min_common_good_fraction:.0%}")
@@ -609,12 +610,13 @@ class DynamicBlinkService:
     def _warnings(self, frames: list[DynamicFrame], common_good: float, gap_nm: float, mean_bw_nm: float,
                   calibrations: dict[str, DetectorCalibration], field_gap: float) -> list[str]:
         notes = [
-            f"The two observations differ by {gap_nm:.1f} nm in central wavelength ({gap_nm / mean_bw_nm:.0%} of the {mean_bw_nm:.0f} nm bandwidth). "
+            f"At the target, the two observations differ by {gap_nm:.1f} nm in central wavelength ({gap_nm / mean_bw_nm:.0%} of the {mean_bw_nm:.0f} nm bandwidth). "
             "That is acceptable for a visual comparison but is not photometric equivalence."
         ]
         if field_gap / mean_bw_nm > 0.5:
             notes.append(f"Across the field the two frames' wavelengths differ by up to {field_gap:.0f} nm ({field_gap / mean_bw_nm:.0%} of the bandwidth), "
-                         "because the wavelength changes across the detector and the two exposures were taken at different orientations. Differences are largest toward the field edges.")
+                         "because the wavelength changes across the detector and the two exposures were taken at different orientations. "
+                         "Wavelength matching applies only at the target; differences elsewhere may be spectral rather than changes over time.")
         if common_good < 0.95:
             notes.append(f"Only {common_good:.1%} of the field is usable in both frames; flagged or uncovered areas are transparent.")
         for f in frames:

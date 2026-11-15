@@ -113,7 +113,6 @@ class Settings(BaseSettings):
     min_epoch_separation_days: float = 60.0
     max_pair_gap_nm: float = 30.0
     max_gap_over_bandwidth: float = 0.75    # |delta lambda| / mean bandwidth at the target
-    max_field_gap_over_bandwidth: float = 1.5  # worst |delta lambda| / mean bandwidth anywhere in the field
     max_bandwidth_difference_fraction: float = 0.25
     top_pairs_to_try: int = Field(default=5, ge=1, le=20)
     # Exact-verification limits.

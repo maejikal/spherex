@@ -145,6 +145,8 @@ The response records `requested_wavelength_um`; generated PNG URLs and analysis 
 position fell, so two exposures of one field can sample different wavelengths and produce false "variability". The pipeline therefore
 selects pairs by wavelength and re-checks the exact wavelength from the downloaded FITS before accepting a pair.
 
+**Target-based matching, independent of FOV.** Wavelength and bandwidth are calculated at the target's detector position using footprint metadata and the detector's spectral calibration, then verified using each FITS file's WCS and `WCS-WAVE` table. Changing the output FOV does not change that position or the wavelength criteria. FOV still controls spatial coverage and image-quality checks, so it can change which observations are usable. Field-wide wavelength differences remain in `selection.field_gap_nm` and warnings, but never reject a target-matched pair. Matching at the target does not imply spectral equivalence elsewhere in the image; apparent changes away from the target may be spectral, not temporal. The former `SKY_MAX_FIELD_GAP_OVER_BANDWIDTH` setting and corresponding response threshold have been removed.
+
 **Pipeline** (`services/pair_selection.py`, `spherex_calibration.py`, `irsa_archive.py`, `dynamic_blink.py`):
 
 1. **Discovery.** IRSA SIA2 (`COLLECTION=spherex_dr1`, `POS=CIRCLE ra dec 0.001`) returns a VOTable. Rows are validated (each is skipped and reported if
@@ -157,7 +159,7 @@ selects pairs by wavelength and re-checks the exact wavelength from the download
    (the header's `[CALIB] spectral_wcs <id>`), never shared between detectors. It is seeded from local full images when present
    (`SKY_BLINK_CALIBRATION_SEED_FILES`), else bootstrapped from one tiny IRSA cutout per detector (about 8 s, once, then cached on disk).
 4. **Ranking.** Cross-epoch, same-detector pairs, deterministic: wavelength gap relative to the bandwidth, bandwidth match, detector-edge margin, epoch
-   separation, rotation closest to north-up, observation ids. The wavelength spread *across the field* is checked as well as at the target.
+   separation, rotation closest to north-up, observation ids. Wavelength compatibility uses only the calculated wavelength/bandwidth at the target; field-wide spread is diagnostic only.
 5. **Verification (best candidate first, up to `SKY_TOP_PAIRS_TO_TRY`).** Cutouts (1.5x the field, `center=ra,dec d&size=`) are downloaded, validated and cached atomically.
    Cutout pixel positions are converted to full-detector positions (`x_full = x_local + CRPIX_full - CRPIX_cutout`) before the calibration lookup. **`CRPIX_full`
    is read from each file's own full-image header** (a small HTTP range request for the first ~25 KB, cached on disk), because it is *not* always the detector centre:

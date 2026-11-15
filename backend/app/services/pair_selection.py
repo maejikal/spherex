@@ -258,7 +258,6 @@ def predict(obs: SiaObservation, ra: float, dec: float, fov_deg: float, scale_ar
 class Settings:
     max_pair_gap_nm: float = 30.0
     max_gap_over_bandwidth: float = 0.75
-    max_field_gap_over_bandwidth: float = 1.5
     max_bandwidth_difference_fraction: float = 0.25
     min_epoch_separation_days: float = 60.0
 
@@ -271,7 +270,7 @@ class PairCandidate:
     gap_nm: float
     gap_over_bandwidth: float
     bandwidth_difference: float
-    field_gap_nm: float
+    field_gap_nm: float  # diagnostic only; matching uses the target's wavelength, not the FOV
     margin_px: float
     epoch_separation_days: float
 
@@ -290,7 +289,6 @@ class PairingReport:
     too_close_in_time: int = 0
     rejected_wavelength: int = 0
     rejected_bandwidth: int = 0
-    rejected_field: int = 0
 
 
 def rotation_preference(angle: int) -> int:
@@ -300,7 +298,7 @@ def rotation_preference(angle: int) -> int:
 def rank_pairs(epochs: list[list[Prediction]], settings: Settings) -> PairingReport:
     """All admissible cross-epoch pairs, best first. Ordering is fully deterministic.
 
-    Order of criteria: wavelength compatibility (relative to the bandwidth, to 0.001), bandwidth match,
+    Order of criteria: target wavelength compatibility (relative to the bandwidth, to 0.001), bandwidth match,
     detector-edge margin (coverage / quality), larger epoch separation, rotation closest to north-up,
     then observation ids as the final tie-break.
     """
@@ -335,9 +333,6 @@ def rank_pairs(epochs: list[list[Prediction]], settings: Settings) -> PairingRep
                 continue
             la, lb = a.angles[angle][1], b.angles[angle][1]
             field_gap = float(np.nanmax(np.abs(la - lb))) * 1000 if np.all(np.isfinite(la)) and np.all(np.isfinite(lb)) else math.inf
-            if field_gap / mean_bw_nm > settings.max_field_gap_over_bandwidth:
-                report.rejected_field += 1
-                continue
             report.candidates.append(PairCandidate(a, b, angle, gap_nm, rel, bw_diff, field_gap,
                                                    min(a.angles[angle][0], b.angles[angle][0]), separation))
     report.candidates.sort(key=lambda c: (round(c.gap_over_bandwidth, 3), round(c.bandwidth_difference, 3), -round(c.margin_px, 0),

@@ -154,7 +154,7 @@ def _dynamic_response(result: DynamicResult, settings) -> DynamicBlinkResponse: 
             field_gap_nm=round(result.field_gap_nm, 3), bandwidth_difference_fraction=round(pair.bandwidth_difference, 4),
             epoch_separation_days=round(pair.epoch_separation_days, 2), candidates_tried=result.candidates_tried, rejected_candidates=result.rejected,
             thresholds={"max_pair_gap_nm": settings.max_pair_gap_nm, "max_gap_over_bandwidth": settings.max_gap_over_bandwidth,
-                        "max_field_gap_over_bandwidth": settings.max_field_gap_over_bandwidth, "min_common_good_fraction": settings.min_common_good_fraction},
+                        "min_common_good_fraction": settings.min_common_good_fraction},
         ),
         provenance=Provenance(
             source="NASA/IPAC Infrared Science Archive (IRSA)", collection=result.collection, release=result.release,

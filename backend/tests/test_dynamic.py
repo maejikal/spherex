@@ -277,7 +277,8 @@ def prediction(obs_id, mjd, lam, bw, angles=(0,), det="D3", margin=50.0, field=N
     return Prediction(obs, 100.0, 100.0, lam, bw, {a: (margin, field_lams) for a in angles})
 
 
-PAIRS = PairSettings(30.0, 0.75, 1.5, 0.25, 60.0)
+PAIRS = PairSettings(max_pair_gap_nm=30.0, max_gap_over_bandwidth=0.75,
+                     max_bandwidth_difference_fraction=0.25, min_epoch_separation_days=60.0)
 
 
 def test_ranking_is_deterministic_and_relative_to_bandwidth():
@@ -307,11 +308,13 @@ def test_ranking_thresholds_epoch_separation_detector_and_rotation_preference():
     assert none.candidates == [] and none.no_common_rotation == 1
 
 
-def test_field_wide_wavelength_variation_can_reject_a_pair_that_matches_at_the_centre():
+def test_field_wide_wavelength_variation_does_not_reject_a_target_matched_pair():
     a = prediction("A", 60810, 2.000, 0.040, field=[1.95, 2.05, 1.95, 2.05, 2.0])
     b = prediction("B", 61010, 2.000, 0.040, field=[2.05, 1.95, 2.05, 1.95, 2.0])   # equal at the centre, 100 nm apart at the corners
     rep = rank_pairs([[a], [b]], PAIRS)
-    assert rep.candidates == [] and rep.rejected_field == 1
+    assert [c.key for c in rep.candidates] == [("A", "B")]
+    assert rep.candidates[0].gap_nm == 0
+    assert rep.candidates[0].field_gap_nm == pytest.approx(100)
 
 
 # ===================================================================================== archive access
@@ -479,6 +482,33 @@ def test_dynamic_analysis_end_to_end_with_known_ground_truth(archive, stack):
     assert r.wcs_header["CTYPE1"] == "RA---TAN" and r.wcs_header["CRPIX1"] == 30.0
 
 
+@pytest.mark.parametrize("requested", [None, 1.875])
+def test_target_wavelength_matching_is_independent_of_fov(archive, stack, requested):
+    may, dec = standard_pair(archive)
+    results = [stack.service.analyse(*T, fov, wavelength_um=requested) for fov in (0.02, 0.1, 0.5)]
+    small, _, wide = results
+    for result in results:
+        assert result.pair.key == (may.obs_id, dec.obs_id)
+        assert result.pair.gap_nm == pytest.approx(small.pair.gap_nm)
+        assert result.exact_gap_nm == pytest.approx(small.exact_gap_nm, abs=1e-6)
+        for frame, reference in zip(result.frames, small.frames):
+            assert frame.centre_wavelength_um == pytest.approx(reference.centre_wavelength_um, abs=1e-9)
+            assert frame.centre_bandwidth_um == pytest.approx(reference.centre_bandwidth_um, abs=1e-9)
+    # Opposite detector orientations give a large edge mismatch, but the target still matches.
+    assert wide.field_gap_nm > 1.5 * wide.frames[0].centre_bandwidth_um * 1000
+    assert wide.field_gap_nm > small.field_gap_nm
+    assert any("Across the field" in warning for warning in wide.warnings)
+
+
+def test_fits_verification_keeps_field_wavelength_variation_as_diagnostic_only(archive, stack):
+    standard_pair(archive)
+    small = stack.service.analyse(*T, 0.02)
+    wide = stack.service._verify_and_build(small.pair, *T, 0.5, 1, [], {"D3": stack.registry.current("D3")}, {})
+    assert wide.exact_gap_nm == pytest.approx(small.exact_gap_nm, abs=1e-6)
+    assert wide.field_gap_nm > 1.5 * wide.frames[0].centre_bandwidth_um * 1000
+    assert any("Across the field" in warning for warning in wide.warnings)
+
+
 def test_a_moving_source_remains_displaced_after_alignment(archive, stack):
     mover_a, mover_b = star(30.0, -20.0, 6.0), star(30.0 + 8 * SCALE, -20.0 + 4 * SCALE, 6.0)
     standard_pair(archive, stars=(), may_extra=dict(sources=(mover_a, STARS[0])), dec_extra=dict(sources=(mover_b, STARS[0])))
@@ -580,11 +610,14 @@ def test_every_candidate_failing_gives_a_reason_not_a_silent_accept(archive, sta
     assert err.value.reason in DynamicSelectionError.REASONS
 
 
-def test_wavelength_mismatch_is_reported_as_such(archive, stack):
+@pytest.mark.parametrize("fov", [0.02, 0.1, 0.2])
+def test_wavelength_mismatch_is_reported_as_such(archive, stack, fov):
     standard_pair(archive, may_y=100, dec_y=300)  # ~125 nm apart at the target
     with pytest.raises(DynamicSelectionError) as err:
-        analyse(stack)
+        stack.service.analyse(*T, fov)
     assert err.value.code == "wavelength_mismatch" and "comparable wavelengths" in err.value.message
+    assert "at the target" in err.value.message
+    assert "smaller field of view" not in err.value.message
 
 
 def test_one_epoch_only_and_insufficient_coverage_have_distinct_reasons(archive, stack):
@@ -931,6 +964,7 @@ def test_dynamic_endpoint_contract_images_and_provenance(api, archive):
     sel = body["selection"]
     assert sel["actual_gap_nm"] == pytest.approx(abs(body["frames"][0]["wavelength_um"]["mean"] - body["frames"][1]["wavelength_um"]["mean"]) * 1000, abs=0.01)
     assert sel["candidates_tried"] == 1 and sel["thresholds"]["max_pair_gap_nm"] == 30.0
+    assert "max_field_gap_over_bandwidth" not in sel["thresholds"]
     assert body["provenance"]["collection"] == "spherex_dr1" and body["provenance"]["release"] == "l2b-v27-2026-198" and "SOURCE" in body["provenance"]["flag_policy"]
     assert body["wcs"]["CTYPE1"] == "RA---TAN" and any("differ by" in w for w in body["warnings"])
     sizes = set()
@@ -1171,13 +1205,14 @@ def test_requested_wavelength_selects_verified_pair_and_isolates_cache(archive, 
     assert stack.service.image(*T, FOV, "2025-05", wavelength_um=4.075) == long.images["2025-05"]
 
 
-def test_requested_wavelength_never_falls_back_to_unrelated_pair(archive, stack):
+@pytest.mark.parametrize("fov", [0.02, 0.1, 0.5])
+def test_requested_wavelength_never_falls_back_to_unrelated_pair(archive, stack, fov):
     standard_pair(archive)
     with pytest.raises(DynamicSelectionError) as caught:
-        stack.service.analyse(*T, FOV, wavelength_um=4.1)
+        stack.service.analyse(*T, fov, wavelength_um=4.1)
     assert caught.value.code == "wavelength_mismatch"
     assert "4.1" in caught.value.message
-    assert stack.service.analyse(*T, FOV).frames  # automatic selection still works
+    assert stack.service.analyse(*T, fov).frames  # automatic selection still works
 
 
 @pytest.mark.parametrize("wave", [0, -1, 0.74, 5.01, math.nan, math.inf])
